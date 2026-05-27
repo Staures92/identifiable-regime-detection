@@ -2,7 +2,7 @@
 
 Replication code for *Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models*.
 
-This repository computes a rolling-window absorption ratio on a panel of pension fund returns, identifies clusters of co-moving funds with DTW + Ward, and detects regime structure in the absorption ratio with a sticky Hidden Markov Model fit by EM and validated by Bayesian inference under label-switching-corrected identifiability diagnostics. The included synthetic dataset lets you run the full pipeline end-to-end without access to the real Bank of Lithuania data.
+This repository computes a rolling-window absorption ratio on a panel of pension fund returns, identifies clusters of co-moving funds with DTW + Ward, and detects regime structure in the absorption ratio with a sticky Hidden Markov Model fit by EM and validated by Bayesian inference under label-switching-corrected identifiability diagnostics. The included synthetic dataset lets you run the full pipeline end-to-end without access to the real data.
 
 ## Repository layout
 
@@ -36,7 +36,7 @@ identifiable-regime-detection/
 
 ## Installation
 
-Requires Python 3.10 or newer.
+Requires Python 3.14.3 or newer.
 
 ```bash
 git clone <repo-url>
