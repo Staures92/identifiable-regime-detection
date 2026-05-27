@@ -15,7 +15,7 @@ abstract: >-
 version: "1.0.0"
 date-released: "2026-05-27"
 license: MIT
-repository-code: "https://github.com/stauresmeg/identifiable-regime-detection"
+repository-code: "https://github.com/Staures92/identifiable-regime-detection"
 doi: 10.5281/zenodo.20408012
 authors:
   - family-names: "Megang Nkamga"
