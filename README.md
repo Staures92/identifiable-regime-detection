@@ -41,7 +41,7 @@ identifiable-regime-detection/
 Requires Python 3.14.3 or newer.
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/Staures92/identifiable-regime-detection
 cd identifiable-regime-detection
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
