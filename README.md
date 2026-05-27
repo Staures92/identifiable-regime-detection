@@ -1,6 +1,8 @@
 # Identifiable Regime Detection in Pension Fund Networks
+[![DOI](https://zenodo.org/badge/1250935473.svg)](https://doi.org/10.5281/zenodo.20408012)
 
 Replication code for *Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models*.
+
 
 This repository computes a rolling-window absorption ratio on a panel of pension fund returns, identifies clusters of co-moving funds with DTW + Ward, and detects regime structure in the absorption ratio with a sticky Hidden Markov Model fit by EM and validated by Bayesian inference under label-switching-corrected identifiability diagnostics. The included synthetic dataset lets you run the full pipeline end-to-end without access to the real data.
 
@@ -103,13 +105,14 @@ python -m pytest tests/
 
 ## Citation
 
-If you use this code, please cite:
+If you use this code, please cite both the manuscript and the software:
 
-```
-Megang Nkamga, J. S. et al. (2026). Identifiable Regime Detection in Pension
-Fund Networks via Sticky Hidden Markov Models. Working paper, Kaunas University
-of Technology.
-```
+**Manuscript:**
+> Megang Nkamga, J. S., & Kabašinskas, A. (2026). Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models. Working paper, Kaunas University of Technology.
+
+**Software:**
+> Megang Nkamga, J. S., & Kabašinskas, A. (2026). Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models (v1.0.0) [Software]. Zenodo. https://doi.org/10.5281/zenodo.20408012
+
 
 ## License
 
