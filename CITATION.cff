@@ -1,0 +1,49 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models"
+abstract: >-
+  Replication code for the manuscript "Identifiable Regime Detection in
+  Pension Fund Networks via Sticky Hidden Markov Models". The package
+  computes a rolling-window absorption ratio on a panel of pension fund
+  returns, identifies clusters of co-moving funds with DTW + Ward, and
+  detects regime structure in the absorption ratio with a sticky Hidden
+  Markov Model fit by EM and validated by Bayesian inference under
+  label-switching-corrected identifiability diagnostics. A synthetic
+  dataset generator is included so the full pipeline can be reproduced
+  end-to-end without access to the original Bank of Lithuania data.
+version: "1.0.0"
+date-released: "2026-05-27"
+license: MIT
+repository-code: "https://github.com/stauresmeg/identifiable-regime-detection"
+doi: 10.5281/zenodo.20408012
+authors:
+  - family-names: "Megang Nkamga"
+    given-names: "Junile Staures"
+    orcid: "https://orcid.org/0009-0001-8039-4358"
+    affiliation: "Kaunas University of Technology, Lithuania"
+  - family-names: "Kabašinskas"
+    given-names: "Audrius"
+    orcid: "https://orcid.org/0000-0001-6863-5895"
+    affiliation: "Kaunas University of Technology, Lithuania"
+keywords:
+  - sticky hidden Markov model
+  - regime detection
+  - pension funds
+  - absorption ratio
+  - dynamic time warping
+  - hierarchical clustering
+  - Bayesian inference
+  - systemic risk
+preferred-citation:
+  type: article
+  title: "Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models"
+  year: 2026
+  authors:
+    - family-names: "Megang Nkamga"
+      given-names: "Junile Staures"
+      orcid: "https://orcid.org/0009-0001-8039-4358"
+    - family-names: "Kabašinskas"
+      given-names: "Audrius"
+      orcid: "https://orcid.org/0000-0001-6863-5895"
+  notes: "Working paper, Kaunas University of Technology. Submitted to Mathematics (MDPI), Special Issue: Machine Learning, Statistics and Big Data, 2nd Edition."
