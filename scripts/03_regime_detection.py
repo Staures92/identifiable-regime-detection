@@ -43,8 +43,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 # ---- toggle ----
-RUN_BAYESIAN = False
-# RUN_BAYESIAN = True
+#RUN_BAYESIAN = False
+RUN_BAYESIAN = True
 
 from irdpfn.absorption import compute_absorption_ratio, compute_risk_decomposition
 from irdpfn.config import (
