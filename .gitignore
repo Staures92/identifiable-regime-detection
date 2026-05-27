@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated data (real data should NOT be committed)
+data/pension_fund_real.csv
+data/*.parquet
+
+# But keep the synthetic data so reviewers can run the pipeline
+!data/pension_fund_synthetic.csv
+
+# Outputs
+outputs/*.csv
+figures/*.pdf
+figures/*.png
+
+# But keep placeholders so the directories exist in the repo
+!outputs/.gitkeep
+!figures/.gitkeep
