@@ -10,30 +10,30 @@ This repository computes a rolling-window absorption ratio on a panel of pension
 
 ```
 identifiable-regime-detection/
-├── src/irdpfn/                  # Importable package
-│   ├── config.py                  Project-wide constants and paths
-│   ├── data_io.py                 Loading, pivoting, benchmark download
-│   ├── absorption.py              AR_t, risk decomposition, alt. covariances
-│   ├── clustering.py              DTW + Ward + robustness checks
-│   ├── regime.py                  HMM (EM + Bayesian NUTS)
-│   ├── diagnostics.py             Correlation tests, regime regression
-│   ├── figures.py                 All publication figures
-│   └── synthetic_data.py          Synthetic dataset generator
-├── scripts/                    # Pipeline runners
-│   ├── 00_generate_synthetic_data.py
-│   ├── 01_absorption_ratio.py
-│   ├── 02_clustering.py
-│   ├── 03_regime_detection.py
-│   ├── 04_diagnostics.py
-│   └── run_all.py
-├── data/                       # Input data (synthetic dataset written here)
-├── figures/                    # Generated PDFs
-├── outputs/                    # CSV tables and intermediate results
-├── tests/                      # Smoke test
-├── docs/                       # Supplementary notes
-├── requirements.txt
-├── LICENSE
-└── README.md
+src/irdpfn/                  # Importable package
+ - config.py                  Project-wide constants and paths
+ - data_io.py                 Loading, pivoting, benchmark download
+ - absorption.py              AR_t, risk decomposition, alt. covariances
+ - clustering.py              DTW + Ward + robustness checks
+ - regime.py                  HMM (EM + Bayesian NUTS)
+ - diagnostics.py             Correlation tests, regime regression
+ - figures.py                 All publication figures
+ - synthetic_data.py          Synthetic dataset generator
+scripts/                    # Pipeline runners
+ - 00_generate_synthetic_data.py
+ - 01_absorption_ratio.py
+ - 02_clustering.py
+ - 03_regime_detection.py
+ -  04_diagnostics.py
+ - run_all.py
+data/                       # Input data (synthetic dataset written here)
+ - figures/                    # Generated PDFs
+ - outputs/                    # CSV tables and intermediate results
+ - tests/                      # Smoke test
+ - docs/                       # Supplementary notes
+ - requirements.txt
+ - LICENSE
+README.md
 ```
 
 ## Installation
