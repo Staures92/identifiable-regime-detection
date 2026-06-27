@@ -27,7 +27,7 @@ Thumbs.db
 data/pension_fund_real.csv
 data/*.parquet
 
-# But keep the synthetic data so reviewers can run the pipeline
+# But keep the synthetic data so anyone can run the pipeline
 !data/pension_fund_synthetic.csv
 
 # Outputs
