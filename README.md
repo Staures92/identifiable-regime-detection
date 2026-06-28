@@ -1,6 +1,6 @@
 # Identifiable Regime Detection in Pension Fund Networks
 
-[![DOI](https://zenodo.org/badge/1250935473.svg)](https://doi.org/10.5281/zenodo.20408012)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20408012.svg)](https://doi.org/10.5281/zenodo.20408012)
 
 Reference implementation of the absorption-ratio → DTW-clustering → sticky-HMM
 regime-detection pipeline from the paper *"Identifiable Regime Detection in
