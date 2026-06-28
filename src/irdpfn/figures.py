@@ -104,16 +104,15 @@ def fig_return_series(R_f, R_bf, G_b, window=C.WINDOW, name="fig01_return_series
 # ---------------------------------------------------------------------------
 # Figure 2 — AR_t with HMM regimes + benchmarks
 # ---------------------------------------------------------------------------
-def fig_ar_benchmarks(ar_clean, regime_series, tau, R_bf, G_b, N=C.N,
-                      crisis_days=None, total_days=None,
-                      name="fig02_ar_benchmarks.pdf"):
-    """AR_t + fund benchmarks + equity factors + yield shocks (4 stacked panels).
+def fig_ar_benchmarks_states(ar_clean, regime_series, tau, R_bf, G_b, N=C.N,
+                             crisis_days=None, total_days=None,
+                             name="fig02_ar_benchmarks_states.pdf"):
+    """AR_t + benchmarks shaded by the 3 *detected HMM states*.
 
-    Mirrors the manuscript figure: panel 1 is AR_t alone with crisis shading;
-    panels 2-3 are 60-day moving averages; panel 4 shows the *raw* yield shocks
-    in basis points. ``regime_series``/``tau`` are accepted for call-site
-    compatibility but not drawn here (regime overlays live in
-    ``fig_regime_classification``)."""
+    Mirrors the manuscript figure: every panel carries the HMM regime shading
+    (Low/Moderate/High concentration); panel 1 marks the crisis threshold tau,
+    the 1/N floor, and the crisis-day count; panels 2-4 are 60-day moving
+    averages of the fund benchmarks, the equity factors, and the yield changes."""
     set_style()
     idx = ar_clean.index
     fig = plt.figure(figsize=(14, 14))
@@ -122,17 +121,96 @@ def fig_ar_benchmarks(ar_clean, regime_series, tau, R_bf, G_b, N=C.N,
     ax1, ax2, ax3, ax4 = (fig.add_subplot(gs[i]) for i in range(4))
     axes = [ax1, ax2, ax3, ax4]
 
-    # Panel 1 — absorption ratio
+    # Panel 1 — absorption ratio with threshold, 1/N floor, regime shading
+    ax1.plot(idx, ar_clean.values, color="black", lw=1.0, label=r"$AR_t$", zorder=5)
+    ax1.axhline(tau, color="darkred", ls="--", lw=1.4, label=fr"$\tau={tau:.3f}$")
+    ax1.axhline(1 / N, color="gray", ls=":", lw=1.0, label=fr"$1/N={1/N:.3f}$")
+    ax1.set_ylabel(r"$AR_t$")
+    ax1.set_ylim(ar_clean.min() * 0.99, ar_clean.max() * 1.01)
+    if crisis_days is not None and total_days is not None:
+        ax1.annotate(f"Crisis days: {crisis_days:,}/{total_days:,} "
+                     f"({100 * crisis_days / total_days:.1f}%)",
+                     xy=(0.985, 0.05), xycoords="axes fraction", ha="right",
+                     fontsize=9, bbox=dict(boxstyle="round,pad=0.3",
+                                           facecolor="white", edgecolor="gray", alpha=0.9))
+    regime_patches = [mpatches.Patch(color=C.REGIME_COLORS[r], alpha=0.30, label=r)
+                      for r in C.REGIME_NAMES]
+    h1, _ = ax1.get_legend_handles_labels()
+    ax1.legend(handles=h1 + regime_patches, fontsize=8, ncol=6, loc="upper center",
+               bbox_to_anchor=(0.5, 1.16), framealpha=0.9)
+
+    # Panel 2 — fund-specific benchmarks (60-day MA)
+    for fund in R_bf.columns:
+        color = C.PROVIDER_COLORS.get(fund.split("_")[0], "gray")
+        ma = R_bf[fund].reindex(idx).rolling(60).mean()
+        ax2.plot(ma.index, ma.values, color=color, lw=0.7, alpha=0.55)
+    ax2.axhline(0, color="black", lw=0.5)
+    ax2.set_ylabel("$r^{(b,f)}_{i,t}$\n(60-day MA)")
+    ax2.legend(handles=[Line2D([0], [0], color=c, lw=1.5, label=p)
+                        for p, c in C.PROVIDER_COLORS.items()],
+               fontsize=8, loc="upper center", bbox_to_anchor=(0.5, 1.12),
+               framealpha=0.9, ncol=5)
+
+    # Panel 3 — global equity benchmarks (60-day MA)
+    for col, (color, ls, lw, lab) in C.EQUITY_SERIES.items():
+        ma = G_b[col].reindex(idx).rolling(60).mean()
+        ax3.plot(ma.index, ma.values, color=color, ls=ls, lw=lw, alpha=0.90, label=lab)
+    ax3.axhline(0, color="black", lw=0.5)
+    ax3.set_ylabel("Equity benchmarks\n(60-day MA)")
+    ax3.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, 1.12),
+               framealpha=0.9, ncol=3)
+
+    # Panel 4 — euro-area yield changes (60-day MA, bp)
+    for col, (color, ls, lw, lab) in C.RATE_SERIES.items():
+        ma = G_b[col].reindex(idx).rolling(60).mean()
+        ax4.plot(ma.index, ma.values, color=color, ls=ls, lw=lw, alpha=0.90, label=lab)
+    ax4.axhline(0, color="black", lw=0.6)
+    ax4.set_ylabel("Yield changes\n(60-day MA)"); ax4.set_xlabel("Date")
+    ax4.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, 1.12),
+               framealpha=0.9, ncol=2)
+
+    # regime shading on every panel
+    for ax in axes:
+        regime_shading(ax, idx, regime_series, alpha=0.18)
+    for ax in (ax1, ax2, ax3):
+        ax.tick_params(labelbottom=False)
+    _year_axis(ax4, idx)
+    for ax in axes:
+        ax.set_xlim(idx.min(), idx.max())
+    return _save(fig, name)
+
+
+# ---------------------------------------------------------------------------
+# Figure 2b — AR_t + benchmarks shaded by labelled crisis events
+# ---------------------------------------------------------------------------
+def fig_ar_benchmarks_events(ar_clean, R_bf, G_b,
+                             name="fig02_ar_benchmarks_events.pdf"):
+    """AR_t + benchmarks shaded by *labelled crisis periods*.
+
+    Companion to ``fig_ar_benchmarks_states``: instead of the detected HMM
+    states, every panel shades the four named episodes (COVID-19, Ukraine war,
+    inflation shock, banking stress). Panel 1 is AR_t alone; panels 2-3 are
+    60-day moving averages; panel 4 shows the *raw* yield shocks in basis points
+    with the event labels."""
+    set_style()
+    idx = ar_clean.index
+    fig = plt.figure(figsize=(14, 14))
+    gs = gridspec.GridSpec(4, 1, figure=fig, height_ratios=[2.5, 2, 2, 2],
+                           hspace=0.20)
+    ax1, ax2, ax3, ax4 = (fig.add_subplot(gs[i]) for i in range(4))
+    axes = [ax1, ax2, ax3, ax4]
+
+    # Panel 1 — absorption ratio alone
     ax1.plot(idx, ar_clean.values, color="black", lw=1.0, label=r"$AR_t$", zorder=5)
     ax1.set_ylabel(r"$AR_t$")
-    ax1.set_ylim(ar_clean.min() * 0.97, ar_clean.max() * 1.02)
+    ax1.set_ylim(ar_clean.min() * 0.99, ar_clean.max() * 1.01)
     ax1.legend(loc="upper right", fontsize=9, framealpha=0.9)
 
     # Panel 2 — fund-specific benchmarks (60-day MA)
     for fund in R_bf.columns:
         color = C.PROVIDER_COLORS.get(fund.split("_")[0], "gray")
         ma = R_bf[fund].reindex(idx).rolling(60).mean()
-        ax2.plot(ma.index, ma.values, color=color, lw=0.7, alpha=0.50)
+        ax2.plot(ma.index, ma.values, color=color, lw=0.7, alpha=0.55)
     ax2.axhline(0, color="black", lw=0.5)
     ax2.set_ylabel("$r^{(b,f)}_{i,t}$\n(60-day MA)")
     ax2.legend(handles=[Line2D([0], [0], color=c, lw=1.5, label=p)
@@ -147,7 +225,7 @@ def fig_ar_benchmarks(ar_clean, regime_series, tau, R_bf, G_b, N=C.N,
     ax3.set_ylabel("Global equity\nfactors\n(60-day MA)")
     ax3.legend(fontsize=8, loc="upper right", framealpha=0.9, ncol=3)
 
-    # Panel 4 — euro-area yield shocks (raw, bp)
+    # Panel 4 — euro-area yield shocks (raw, bp) with event labels
     for col, (color, ls, lw, lab) in C.RATE_SERIES.items():
         s = G_b[col].reindex(idx)
         ax4.plot(s.index, s.values, color=color, ls=ls, lw=lw, alpha=0.85, label=lab)
@@ -155,6 +233,7 @@ def fig_ar_benchmarks(ar_clean, regime_series, tau, R_bf, G_b, N=C.N,
     ax4.set_ylabel("Yield shocks\n(bp)"); ax4.set_xlabel("Date")
     ax4.legend(fontsize=8, loc="upper right", framealpha=0.9, ncol=2)
 
+    # labelled crisis-event shading on every panel; labels on the bottom panel
     for ax in axes:
         shade_events(ax)
     label_events(ax4)
@@ -164,11 +243,6 @@ def fig_ar_benchmarks(ar_clean, regime_series, tau, R_bf, G_b, N=C.N,
     for ax in axes:
         ax.set_xlim(idx.min(), idx.max())
     return _save(fig, name)
-
-
-# ---------------------------------------------------------------------------
-# Figure 3 — baseline vs augmented AR (levels + standardised)
-# ---------------------------------------------------------------------------
 def fig_baseline_vs_augmented(AR_corr, AR_augmented, name="fig03_ar_baseline_vs_augmented.pdf"):
     set_style()
     idx = AR_corr.index.intersection(AR_augmented.index)
@@ -463,19 +537,6 @@ def fig_regime_classification(res, name="fig10_regime_classification.pdf"):
         ax.scatter(series.index[mask], series[mask], s=8,
                    c=C.REGIME_COLORS[regime], label=regime)
     ax.legend(ncol=3); ax.set_title("HMM Regime Classification")
-    fig.tight_layout()
-    return _save(fig, name)
-
-
-def fig_transition_matrix(em_model, name="fig11_transition_matrix.pdf"):
-    set_style()
-    order = np.argsort(em_model.means_.flatten())
-    A = em_model.transmat_[np.ix_(order, order)]
-    labels = ["Low (0)", "Moderate (1)", "High (2)"]
-    fig, ax = plt.subplots(figsize=(7, 5))
-    sns.heatmap(A, annot=True, fmt=".2f", cmap="Blues", cbar=True,
-                xticklabels=labels, yticklabels=labels, ax=ax)
-    ax.set_title("Transition Matrix"); ax.set_xlabel("To"); ax.set_ylabel("From")
     fig.tight_layout()
     return _save(fig, name)
 

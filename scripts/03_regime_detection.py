@@ -86,7 +86,7 @@ def main():
         print(diag.to_string(index=False))
         diag.to_csv(C.OUTPUTS_DIR / "step03_identifiability.csv", index=False)
         mcmc0 = cache[(C.K_BASELINE, float(k3["kappa_calibrated"]))]
-        val, _ = rg.validate_baseline(res["em"], mcmc0)
+        val = rg.validate_baseline(res["em"], mcmc0)
         print("\nEM vs Bayesian baseline:")
         print(val.to_string(index=False))
         val.to_csv(C.OUTPUTS_DIR / "step03_em_vs_bayes.csv", index=False)
@@ -97,11 +97,13 @@ def main():
     forecast.to_csv(C.OUTPUTS_DIR / "step03_forward_probabilities.csv", index=False)
     win.to_csv(C.OUTPUTS_DIR / "step03_window_robustness.csv", index=False)
 
-    fig.fig_ar_benchmarks(res["ar_clean"], res["regime_series"], res["tau"],
-                          panel.R_bf, panel.G_b)
+    fig.fig_ar_benchmarks_states(res["ar_clean"], res["regime_series"], res["tau"],
+                                 panel.R_bf, panel.G_b,
+                                 crisis_days=res["crisis_days"],
+                                 total_days=res["total_days"])
+    fig.fig_ar_benchmarks_events(res["ar_clean"], panel.R_bf, panel.G_b)
     fig.fig_emission_distributions(res)
     fig.fig_regime_classification(res)
-    fig.fig_transition_matrix(res["em"])
     fig.fig_acf(acf_df)
     print(f"\nFigures + tables written to {C.FIGURES_DIR} and {C.OUTPUTS_DIR}")
     print("Step 03 complete.")
