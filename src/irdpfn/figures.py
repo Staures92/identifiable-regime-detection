@@ -107,55 +107,61 @@ def fig_return_series(R_f, R_bf, G_b, window=C.WINDOW, name="fig01_return_series
 def fig_ar_benchmarks(ar_clean, regime_series, tau, R_bf, G_b, N=C.N,
                       crisis_days=None, total_days=None,
                       name="fig02_ar_benchmarks.pdf"):
+    """AR_t + fund benchmarks + equity factors + yield shocks (4 stacked panels).
+
+    Mirrors the manuscript figure: panel 1 is AR_t alone with crisis shading;
+    panels 2-3 are 60-day moving averages; panel 4 shows the *raw* yield shocks
+    in basis points. ``regime_series``/``tau`` are accepted for call-site
+    compatibility but not drawn here (regime overlays live in
+    ``fig_regime_classification``)."""
     set_style()
     idx = ar_clean.index
     fig = plt.figure(figsize=(14, 14))
-    gs = gridspec.GridSpec(4, 1, figure=fig, height_ratios=[2.5, 2, 1.8, 1.8],
-                           hspace=0.25)
+    gs = gridspec.GridSpec(4, 1, figure=fig, height_ratios=[2.5, 2, 2, 2],
+                           hspace=0.20)
     ax1, ax2, ax3, ax4 = (fig.add_subplot(gs[i]) for i in range(4))
+    axes = [ax1, ax2, ax3, ax4]
 
-    ax1.plot(idx, ar_clean.values, color="black", lw=0.9, label=r"$AR_t$", zorder=5)
-    regime_shading(ax1, idx, regime_series, alpha=0.20)
-    ax1.axhline(tau, color="darkred", ls="--", lw=1.2, label=fr"$\tau={tau:.3f}$")
-    ax1.axhline(1 / N, color="gray", ls=":", lw=0.8, label=fr"$1/N={1/N:.3f}$")
+    # Panel 1 — absorption ratio
+    ax1.plot(idx, ar_clean.values, color="black", lw=1.0, label=r"$AR_t$", zorder=5)
     ax1.set_ylabel(r"$AR_t$")
-    if crisis_days is not None:
-        ax1.annotate(f"Crisis days: {crisis_days}/{total_days} "
-                     f"({100 * crisis_days / total_days:.1f}%)",
-                     xy=(0.98, 0.05), xycoords="axes fraction", ha="right",
-                     fontsize=9, bbox=dict(boxstyle="round,pad=0.3",
-                                           facecolor="white", alpha=0.8))
-    patches = [mpatches.Patch(color=c, alpha=0.4, label=r)
-               for r, c in C.REGIME_COLORS.items()]
-    h, _ = ax1.get_legend_handles_labels()
-    ax1.legend(handles=h + patches, fontsize=8, ncol=6, loc="upper right")
+    ax1.set_ylim(ar_clean.min() * 0.97, ar_clean.max() * 1.02)
+    ax1.legend(loc="upper right", fontsize=9, framealpha=0.9)
 
+    # Panel 2 — fund-specific benchmarks (60-day MA)
     for fund in R_bf.columns:
+        color = C.PROVIDER_COLORS.get(fund.split("_")[0], "gray")
         ma = R_bf[fund].reindex(idx).rolling(60).mean()
-        ax2.plot(ma.index, ma.values, lw=0.7, alpha=0.5,
-                 color=C.PROVIDER_COLORS.get(fund.split("_")[0], "gray"))
-    ax2.axhline(0, color="black", lw=0.5); ax2.set_ylabel(r"$r^{(b,f)}_{i,t}$")
+        ax2.plot(ma.index, ma.values, color=color, lw=0.7, alpha=0.50)
+    ax2.axhline(0, color="black", lw=0.5)
+    ax2.set_ylabel("$r^{(b,f)}_{i,t}$\n(60-day MA)")
     ax2.legend(handles=[Line2D([0], [0], color=c, lw=1.5, label=p)
                         for p, c in C.PROVIDER_COLORS.items()],
-               fontsize=8, ncol=5, loc="upper right")
+               fontsize=8, loc="upper right", framealpha=0.9, ncol=5)
 
+    # Panel 3 — global equity factors (60-day MA)
     for col, (color, ls, lw, lab) in C.EQUITY_SERIES.items():
         ma = G_b[col].reindex(idx).rolling(60).mean()
-        ax3.plot(ma.index, ma.values, color=color, ls=ls, lw=1.5, label=lab)
-    ax3.axhline(0, color="black", lw=0.5); ax3.set_ylabel("Equity\n(60-day MA)")
-    ax3.legend(fontsize=9, ncol=3, loc="upper right")
+        ax3.plot(ma.index, ma.values, color=color, ls=ls, lw=lw, alpha=0.90, label=lab)
+    ax3.axhline(0, color="black", lw=0.5)
+    ax3.set_ylabel("Global equity\nfactors\n(60-day MA)")
+    ax3.legend(fontsize=8, loc="upper right", framealpha=0.9, ncol=3)
 
+    # Panel 4 — euro-area yield shocks (raw, bp)
     for col, (color, ls, lw, lab) in C.RATE_SERIES.items():
-        ma = G_b[col].reindex(idx).rolling(60).mean()
-        ax4.plot(ma.index, ma.values, color=color, ls=ls, lw=1.8, label=lab)
-    ax4.axhline(0, color="black", lw=0.5)
-    ax4.set_ylabel("Yield changes\n(60-day MA)"); ax4.set_xlabel("Date")
-    ax4.legend(fontsize=9, ncol=2, loc="upper right")
+        s = G_b[col].reindex(idx)
+        ax4.plot(s.index, s.values, color=color, ls=ls, lw=lw, alpha=0.85, label=lab)
+    ax4.axhline(0, color="black", lw=0.6)
+    ax4.set_ylabel("Yield shocks\n(bp)"); ax4.set_xlabel("Date")
+    ax4.legend(fontsize=8, loc="upper right", framealpha=0.9, ncol=2)
 
+    for ax in axes:
+        shade_events(ax)
+    label_events(ax4)
     for ax in (ax1, ax2, ax3):
         ax.tick_params(labelbottom=False)
     _year_axis(ax4, idx)
-    for ax in (ax1, ax2, ax3, ax4):
+    for ax in axes:
         ax.set_xlim(idx.min(), idx.max())
     return _save(fig, name)
 
@@ -179,7 +185,7 @@ def fig_baseline_vs_augmented(AR_corr, AR_augmented, name="fig03_ar_baseline_vs_
     axR.set_ylabel("Standardised AR ($z$)"); axR.set_xlabel("Date")
     for ax in (axL, axR):
         shade_events(ax); label_events(ax)
-        ax.legend(loc="upper right", fontsize=9, ncol=1)
+        ax.legend(loc="upper right", fontsize=9, ncol=2, framealpha=0.9)
         _year_axis(ax, idx)
     fig.tight_layout()
     return _save(fig, name)
@@ -204,19 +210,65 @@ def fig_dendrogram(cluster_res, name="fig04_dendrogram.pdf"):
     return _save(fig, name)
 
 
-def fig_cluster_heatmap(cluster_res, which="dtw", name="fig05_cluster_heatmap.pdf"):
+def fig_cluster_heatmap(cluster_res, which="dtw", name="fig05_cluster_comparison.pdf"):
+    """Two stacked Provider x cohort heatmaps: hierarchical DTW (panel A, 'C')
+    vs DTW k-means (panel B, 'KM'), with their ARI in the panel-B title."""
     set_style()
-    from .clustering import cluster_frame
-    df = cluster_frame(cluster_res, which if cluster_res.labels_dtw is not None else "hier")
+    from sklearn.metrics import adjusted_rand_score
+
     best_k = cluster_res.best_k
-    num = df.pivot(index="Provider", columns="AgeCohort", values="Cluster")
-    lab = "C" + df["Cluster"].astype(str)
-    labels = df.assign(L=lab).pivot(index="Provider", columns="AgeCohort", values="L")
-    cmap = ListedColormap(sns.color_palette("coolwarm", best_k))
-    fig, ax = plt.subplots(figsize=(10, 4))
-    sns.heatmap(num, cmap=cmap, annot=labels, fmt="", linewidths=1,
-                linecolor="white", cbar=True, ax=ax, vmin=-0.5, vmax=best_k - 0.5)
-    ax.set_xlabel("Age cohort"); ax.set_ylabel("Provider")
+    providers, cohorts = C.PROVIDERS, C.COHORTS
+    labels_hier = np.asarray(cluster_res.labels_hier)
+    labels_dtw = (np.asarray(cluster_res.labels_dtw)
+                  if cluster_res.labels_dtw is not None else labels_hier)
+
+    heat_hier = pd.DataFrame(index=providers, columns=cohorts, dtype=float)
+    heat_dtw = pd.DataFrame(index=providers, columns=cohorts, dtype=float)
+    for i, fund in enumerate(cluster_res.fund_names):
+        provider, cohort = fund.split("_")
+        heat_hier.loc[provider, cohort] = labels_hier[i]
+        heat_dtw.loc[provider, cohort] = labels_dtw[i]
+
+    ari = adjusted_rand_score(labels_hier, labels_dtw)
+    colors = sns.color_palette("tab10", best_k)
+    cmap = ListedColormap(colors)
+    # hierarchical labels are 1..K, k-means labels are 0..K-1
+    norm_hier = BoundaryNorm(np.arange(0.5, best_k + 1.5), best_k)
+    norm_dtw = BoundaryNorm(np.arange(-0.5, best_k + 0.5), best_k)
+
+    fig, axes = plt.subplots(2, 1, figsize=(6, 10), sharey=True)
+    for ax, heat, norm, prefix, title in [
+        (axes[0], heat_hier, norm_hier, "C", f"(A) Hierarchical DTW (K={best_k})"),
+        (axes[1], heat_dtw, norm_dtw, "KM",
+         f"(B) DTW k-means (K={best_k})\nARI = {ari:.3f}")]:
+        ax.imshow(heat.values, cmap=cmap, norm=norm, aspect="auto")
+        for r in range(heat.shape[0]):
+            for cc in range(heat.shape[1]):
+                val = heat.iloc[r, cc]
+                if not np.isnan(val):
+                    ax.text(cc, r, f"{prefix}{int(val)}", ha="center", va="center",
+                            fontsize=7, fontweight="bold")
+        ax.set_title(title, fontsize=8, fontweight="bold")
+
+    xticklabels = [f"{c}\n({C.COHORT_BANDS[c]})" for c in cohorts]
+    for ax in axes:
+        ax.set_xticks(range(len(cohorts))); ax.set_xticklabels(xticklabels, fontsize=7)
+        ax.set_yticks(range(len(providers))); ax.set_yticklabels(providers, fontsize=7)
+        ax.set_xlabel("Age cohort")
+        ax.set_xticks(np.arange(-0.5, len(cohorts)), minor=True)
+        ax.set_yticks(np.arange(-0.5, len(providers)), minor=True)
+        ax.grid(which="minor", color="white", linewidth=1.6)
+        ax.tick_params(which="minor", bottom=False, left=False)
+    axes[0].set_ylabel("Provider", fontsize=7)
+
+    axes[0].legend(handles=[Patch(facecolor=colors[i - 1], label=f"C{i}")
+                            for i in range(1, best_k + 1)],
+                   title="Hierarchical", loc="upper center",
+                   bbox_to_anchor=(0.5, -0.22), ncol=5, fontsize=6, framealpha=0.9)
+    axes[1].legend(handles=[Patch(facecolor=colors[i], label=f"KM{i}")
+                            for i in range(best_k)],
+                   title="DTW k-means", loc="upper center",
+                   bbox_to_anchor=(0.5, -0.22), ncol=5, fontsize=6, framealpha=0.9)
     fig.tight_layout()
     return _save(fig, name)
 
@@ -254,40 +306,121 @@ def fig_emission_distributions(res, name="fig06_emission_distributions.pdf"):
 # Figure 7 — scatter of AR_t vs interpretive series, coloured by regime
 # ---------------------------------------------------------------------------
 def fig_scatter_correlations(interp_df, tau, name="fig07_scatter_correlations.pdf"):
+    """AR_t vs each interpretive series, coloured by regime, with a single OLS
+    fit and Pearson/Spearman/Kendall stats; crisis threshold marked."""
     set_style()
     from scipy import stats as ss
-    panels = [("MAAR", "Mean Absolute Active Return"),
-              ("MSCI_World", "MSCI World"), ("MSCI_Europe", "MSCI Europe"),
-              ("SP500", "S&P 500"), ("dY_10Y", "10Y Yield Change"),
-              ("dY_2Y", "2Y Yield Change")]
+
+    panels = [("MAAR", "Mean Absolute Active Return", r"$|r^{(f)}_{i,t}-r^{(b,f)}_{i,t}|$"),
+              ("MSCI_World", "MSCI World", r"$r^{(b,g)}_{\mathrm{MSCI\,World},t}$"),
+              ("MSCI_Europe", "MSCI Europe", r"$r^{(b,g)}_{\mathrm{MSCI\,Europe},t}$"),
+              ("SP500", "S&P 500", r"$r^{(b,g)}_{\mathrm{SP500},t}$"),
+              ("dY_10Y", "10-Year Yield Change", r"$\Delta Y^{(10Y)}_t$"),
+              ("dY_2Y", "2-Year Yield Change", r"$\Delta Y^{(2Y)}_t$")]
+
+    def sig(p):
+        return "***" if p < 0.001 else ("**" if p < 0.01 else ("*" if p < 0.05 else "n.s."))
+
+    ar = interp_df["AR"].values
+    pad = (ar.max() - ar.min()) * 0.02
+    xlim = (ar.min() - pad, ar.max() + pad)
+
     fig, axes = plt.subplots(3, 2, figsize=(14, 15)); axes = axes.flatten()
-    for ax, (col, title) in zip(axes, panels):
+    for ax, (col, title, ylabel) in zip(axes, panels):
         for regime in C.REGIME_NAMES:
             sub = interp_df[interp_df["Regime"] == regime]
             ax.scatter(sub["AR"], sub[col], c=C.REGIME_COLORS[regime], s=14,
-                       alpha=0.55, edgecolors="none", label=regime)
+                       alpha=0.55, edgecolors="none", label=regime,
+                       zorder=2 + C.REGIME_NAMES.index(regime))
         x, y = interp_df["AR"].values, interp_df[col].values
-        sl, ic, *_ = ss.linregress(x, y)
+        slope, intercept, *_ = ss.linregress(x, y)
         xl = np.linspace(x.min(), x.max(), 100)
-        ax.plot(xl, ic + sl * xl, color="black", lw=1.8, zorder=10)
+        ax.plot(xl, intercept + slope * xl, color="black", lw=1.8, zorder=10)
+
         r_p, p_p = ss.pearsonr(x, y)
-        ax.annotate(f"Pearson r = {r_p:.3f}", xy=(0.03, 0.97),
-                    xycoords="axes fraction", va="top", fontsize=9,
-                    bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.9))
-        ax.axvline(tau, color="darkred", lw=1.0, ls="--", alpha=0.5)
-        ax.set_xlabel(r"$AR_t$"); ax.set_title(title, fontsize=12, fontweight="bold")
+        r_s, p_s = ss.spearmanr(x, y)
+        r_k, p_k = ss.kendalltau(x, y)
+        txt = (f"Pearson r = {r_p:.3f} ({sig(p_p)})\n"
+               f"Spearman \u03c1 = {r_s:.3f} ({sig(p_s)})\n"
+               f"Kendall \u03c4 = {r_k:.3f} ({sig(p_k)})")
+        xy, ha = ((0.03, 0.97), "left") if slope >= 0 else ((0.97, 0.97), "right")
+        ax.annotate(txt, xy=xy, xycoords="axes fraction", ha=ha, va="top", fontsize=9,
+                    bbox=dict(boxstyle="round,pad=0.4", facecolor="white",
+                              edgecolor="gray", alpha=0.9))
+        ax.axvline(tau, color="darkred", lw=1.0, ls="--", alpha=0.5, zorder=1)
+        ax.set_xlim(xlim); ax.set_xlabel(r"$AR_t$"); ax.set_ylabel(ylabel)
+        ax.set_title(title, fontsize=12, fontweight="bold")
+
     handles = [plt.scatter([], [], c=C.REGIME_COLORS[r], s=40, label=r)
                for r in C.REGIME_NAMES]
-    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=10,
-               bbox_to_anchor=(0.5, -0.01))
-    fig.tight_layout(rect=[0, 0.04, 1, 1])
+    handles.append(Line2D([0], [0], color="black", lw=2.0, label="OLS regression"))
+    handles.append(Line2D([0], [0], color="darkred", ls="--", lw=2.0, alpha=0.5,
+                          label=fr"Crisis threshold $\tau={tau:.3f}$"))
+    fig.legend(handles=handles, loc="lower center", ncol=5, fontsize=10,
+               bbox_to_anchor=(0.5, -0.01), framealpha=0.9)
+    fig.tight_layout(rect=[0, 0.05, 1, 1])
+    return _save(fig, name)
+
+
+# ---------------------------------------------------------------------------
+# Figure 7 — regime-conditional scatter (two-slope fits)
+# ---------------------------------------------------------------------------
+def fig_regime_conditional_scatter(interp_df, fitted_models, tau,
+                                   name="fig08_regime_conditional_scatter.pdf"):
+    """AR_t vs interpretive series with the two fitted lines from the
+    regime-conditional OLS: a calm fit (slope b1) and a High-Concentration fit
+    (slope b1+b3). The visual gap between the slopes *is* b3."""
+    set_style()
+    panel_info = {
+        "MAAR": ("Mean Absolute Active Return", r"$|r^{(f)}_{i,t} - r^{(b,f)}_{i,t}|$"),
+        "MSCI_World": ("MSCI World", r"$r^{(b,g)}_{\mathrm{MSCI\,World},t}$"),
+        "MSCI_Europe": ("MSCI Europe", r"$r^{(b,g)}_{\mathrm{MSCI\,Europe},t}$"),
+        "SP500": ("S&P 500", r"$r^{(b,g)}_{\mathrm{SP500},t}$"),
+        "dY_10Y": ("10-Year Yield Change", r"$\Delta Y^{(10Y)}_t$"),
+        "dY_2Y": ("2-Year Yield Change", r"$\Delta Y^{(2Y)}_t$"),
+    }
+    order = ["MAAR", "MSCI_World", "MSCI_Europe", "SP500", "dY_10Y", "dY_2Y"]
+    ar = interp_df["AR"].values
+
+    fig, axes = plt.subplots(3, 2, figsize=(13, 10)); axes = axes.flatten()
+    for ax, col in zip(axes, order):
+        title, ylabel = panel_info[col]
+        y = interp_df[col].values
+        b0, b1, b2, b3 = fitted_models[col].params
+
+        for regime in C.REGIME_NAMES:
+            mask = (interp_df["Regime"] == regime).values
+            ax.scatter(ar[mask], y[mask], c=C.REGIME_COLORS[regime], s=14,
+                       alpha=0.55, edgecolors="none", label=regime)
+
+        calm = (interp_df["Regime"] != "High-Concentration").values
+        if calm.any():
+            grid = np.linspace(ar[calm].min(), ar[calm].max(), 100)
+            ax.plot(grid, b0 + b1 * grid, color="#1F4E79", lw=2.2,
+                    label=f"Calm fit (slope $b_1$={b1:.3f})", zorder=5)
+        high = (interp_df["Regime"] == "High-Concentration").values
+        if high.any():
+            grid = np.linspace(ar[high].min(), ar[high].max(), 100)
+            ax.plot(grid, (b0 + b2) + (b1 + b3) * grid, color="#8B0000", lw=2.2,
+                    label=f"High-Risk fit (slope $b_1+b_3$={b1 + b3:.3f})", zorder=5)
+
+        ax.axvline(tau, color="gray", ls=":", lw=1.0, alpha=0.7)
+        ax.set_xlabel(r"$AR_t$", fontsize=11); ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(title, fontsize=12, fontweight="bold", pad=28)
+        ax.grid(True, alpha=0.25, ls="--")
+        handles, labs = ax.get_legend_handles_labels()
+        keep = [(h, l) for h, l in zip(handles, labs) if "fit" in l.lower()]
+        ax.legend([h for h, _ in keep], [l for _, l in keep], loc="upper center",
+                  bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=8, framealpha=0.9,
+                  borderaxespad=0.3)
+    fig.tight_layout()
     return _save(fig, name)
 
 
 # ---------------------------------------------------------------------------
 # Figure 8 — cluster MAAR amplification (normal vs crisis)
 # ---------------------------------------------------------------------------
-def fig_cluster_maar(maar_df, name="fig08_cluster_regime_MAAR.pdf"):
+def fig_cluster_maar(maar_df, name="fig09_cluster_regime_MAAR.pdf"):
     set_style()
     extreme, middle = "#2166ac", "#d73027"
     colors = [extreme if "Extreme" in maar_df.loc[c, "Cohort_type"] else middle
@@ -320,7 +453,7 @@ def fig_cluster_maar(maar_df, name="fig08_cluster_regime_MAAR.pdf"):
 # ---------------------------------------------------------------------------
 # Figures 9/10 — regime classification + transition matrix
 # ---------------------------------------------------------------------------
-def fig_regime_classification(res, name="fig09_regime_classification.pdf"):
+def fig_regime_classification(res, name="fig10_regime_classification.pdf"):
     set_style()
     series, labels = res["ar_clean"], res["regime_series"]
     fig, ax = plt.subplots(figsize=(14, 5))
@@ -334,7 +467,7 @@ def fig_regime_classification(res, name="fig09_regime_classification.pdf"):
     return _save(fig, name)
 
 
-def fig_transition_matrix(em_model, name="fig10_transition_matrix.pdf"):
+def fig_transition_matrix(em_model, name="fig11_transition_matrix.pdf"):
     set_style()
     order = np.argsort(em_model.means_.flatten())
     A = em_model.transmat_[np.ix_(order, order)]
@@ -350,7 +483,7 @@ def fig_transition_matrix(em_model, name="fig10_transition_matrix.pdf"):
 # ---------------------------------------------------------------------------
 # Figure 11 — overlap ACF check
 # ---------------------------------------------------------------------------
-def fig_acf(acf_df, window=C.WINDOW, name="fig11_overlap_acf.pdf"):
+def fig_acf(acf_df, window=C.WINDOW, name="fig12_overlap_acf.pdf"):
     set_style()
     fig, ax = plt.subplots(figsize=(10, 4))
     ax.plot(acf_df["lag"], acf_df["empirical"], label="Empirical AR autocorrelation")
@@ -366,7 +499,7 @@ def fig_acf(acf_df, window=C.WINDOW, name="fig11_overlap_acf.pdf"):
 # ---------------------------------------------------------------------------
 # Figure 12 — covariance-estimator comparison
 # ---------------------------------------------------------------------------
-def fig_estimator_comparison(comparison, name="fig12_covariance_comparison.pdf"):
+def fig_estimator_comparison(comparison, name="fig13_covariance_comparison.pdf"):
     set_style()
     styles = {"sample": ("black", 0.9), "ledoit_wolf": ("#2166ac", 0.7),
               "mcd": ("#d73027", 0.7), "mp_filtered": ("#1a9850", 0.7)}

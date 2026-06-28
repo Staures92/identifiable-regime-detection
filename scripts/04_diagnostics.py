@@ -56,7 +56,7 @@ def main():
     print(corr_tbl.to_string(index=False))
 
     # --- regime-conditional OLS ----------------------------------------------
-    ols_tbl, _ = dg.regime_conditional_ols(interp)
+    ols_tbl, fitted = dg.regime_conditional_ols(interp)
     print("\nRegime-conditional OLS (HAC); b3 = AR x D_High interaction:")
     print(ols_tbl.to_string(index=False))
 
@@ -81,6 +81,7 @@ def main():
     maar.to_csv(C.OUTPUTS_DIR / "step04_cluster_maar.csv", index=False)
 
     fig.fig_scatter_correlations(interp, res["tau"])
+    fig.fig_regime_conditional_scatter(interp, fitted, res["tau"])
     fig.fig_cluster_maar(maar)
     print(f"\nFigures + tables written to {C.FIGURES_DIR} and {C.OUTPUTS_DIR}")
     print("Step 04 complete.")
