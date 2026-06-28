@@ -1,108 +1,140 @@
 """
-Smoke test for the CASRI pipeline.
+Smoke and property tests for the irdpfn pipeline.
 
-Verifies that the core modules import and that the absorption ratio,
-clustering, and EM-based HMM steps run on a small synthetic sample
-without raising. Does NOT run the Bayesian sweep — that's covered in
-the full pipeline.
+These run on a small synthetic panel and check structural invariants rather than
+exact numbers (which are data-dependent). They are deliberately cheap: the EM
+fits use few restarts and the Bayesian sweep is never invoked here.
+
+    pytest -q
 """
-
-import sys
-from pathlib import Path
+import warnings
 
 import numpy as np
 import pandas as pd
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+from irdpfn import (synthetic_data, data_io, absorption as ab, clustering as cl,
+                    regime as rg, diagnostics as dg, config as C)
+
+warnings.filterwarnings("ignore")
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def panel(tmp_path_factory):
+    path = tmp_path_factory.mktemp("data") / "synthetic.csv"
+    synthetic_data.write_synthetic_csv(path, seed=C.SEED)
+    return data_io.load_panel(path)
 
 
 @pytest.fixture(scope="module")
-def synthetic_returns():
-    """Build a tiny return panel: 200 days x 10 funds."""
-    rng = np.random.default_rng(0)
-    T, N = 200, 10
-    dates = pd.bdate_range("2023-01-01", periods=T)
-    factor = rng.normal(0, 0.01, T)
-    loadings = rng.uniform(0.5, 1.0, N)
-    idio = rng.normal(0, 0.005, (T, N))
-    returns = loadings[None, :] * factor[:, None] + idio
-    cols = [f"Provider {i+1}_AG{(i % 8) + 1}" for i in range(N)]
-    return pd.DataFrame(returns, index=dates, columns=cols)
+def ar_cov(panel):
+    return ab.absorption_ratio(panel.R_f, window=C.WINDOW,
+                               method="covariance").dropna()
 
 
-def test_imports():
-    """Every module imports cleanly."""
-    from irdpfn import (
-        absorption,
-        clustering,
-        config,
-        data_io,
-        diagnostics,
-        figures,
-        regime,
-        synthetic_data,
-    )
+# ---------------------------------------------------------------------------
+# Synthetic data
+# ---------------------------------------------------------------------------
+def test_panel_shapes(panel):
+    assert panel.R_f.shape[1] == C.N
+    assert panel.G_b.shape[1] == C.M
+    # augmented matrix is [R_f | R_bf | G_b] = 2N + M
+    assert panel.R_aug.shape[1] == 2 * C.N + C.M
+    assert len(panel.R_f) == len(panel.R_bf) == len(panel.G_b)
 
 
-def test_absorption_ratio(synthetic_returns):
-    from irdpfn.absorption import compute_absorption_ratio
-    ar = compute_absorption_ratio(synthetic_returns, window=30).dropna()
-    assert len(ar) > 0
-    assert (ar.between(0, 1)).all()
+def test_cohort_volatility_ladder(panel):
+    # younger cohorts (AG2..AG7) should be more volatile than the AG1/TIPF floors
+    std = panel.R_f.std()
+    ag1 = std[[c for c in panel.R_f.columns if c.endswith("AG1")]].mean()
+    ag7 = std[[c for c in panel.R_f.columns if c.endswith("AG7")]].mean()
+    assert ag7 > ag1
 
 
-def test_risk_decomposition(synthetic_returns):
-    from irdpfn.absorption import compute_risk_decomposition
-    rd = compute_risk_decomposition(synthetic_returns, window=30)
-    assert {"Total_Risk", "Systematic_Risk",
-            "Specific_Risk", "AR_t"} <= set(rd.columns)
-    # AR_t == Systematic / Total
-    np.testing.assert_allclose(
-        rd["AR_t"],
-        rd["Systematic_Risk"] / rd["Total_Risk"],
-        atol=1e-10,
-    )
+def test_returns_fat_tailed(panel):
+    # pooled excess kurtosis well above the Gaussian value of 0
+    flat = panel.R_f.values.ravel()
+    flat = flat[np.isfinite(flat)]
+    k = pd.Series(flat).kurtosis()
+    assert k > 3.0
 
 
-def test_dtw_clustering(synthetic_returns):
-    from irdpfn.clustering import compute_dtw_linkage, db_score_sweep_ward
-    Z, scaled, names = compute_dtw_linkage(synthetic_returns)
-    assert Z.shape == (synthetic_returns.shape[1] - 1, 4)
-    db = db_score_sweep_ward(Z, scaled, K_range=range(2, 5))
-    assert all(v > 0 for v in db.values())
+# ---------------------------------------------------------------------------
+# Absorption ratio
+# ---------------------------------------------------------------------------
+def test_ar_bounded(ar_cov):
+    assert ar_cov.between(0.0, 1.0).all()
 
 
-def test_em_hmm(synthetic_returns):
-    from irdpfn.absorption import compute_absorption_ratio
-    from irdpfn.regime import fit_em_hmms, characterise_regimes, compute_thresholds
-    ar = compute_absorption_ratio(synthetic_returns, window=30).dropna()
-    ar_input = ar.values.reshape(-1, 1)
-    models, bic, K_bic = fit_em_hmms(ar_input, K_range=range(2, 4),
-                                     n_seeds=3, verbose=False)
-    assert K_bic in {2, 3}
-    # Need K=3 to test characterisation with default regime names
-    if 3 in models:
-        from irdpfn.config import REGIME_NAMES
-        labels, summary, info = characterise_regimes(
-            models[3], ar_input, ar.index,
-        )
-        assert len(labels) == len(ar)
-        assert set(labels.unique()) <= set(REGIME_NAMES)
-        thr = compute_thresholds(models[3], synthetic_returns.shape[1],
-                                 ar)
-        assert thr["tau"] > thr["tau_1"]
+def test_correlation_ar_exact_mapping(panel):
+    # AR_corr maps to mean off-diagonal correlation via rho = (N*AR - 1)/(N-1)
+    ar = ab.absorption_ratio(panel.R_f, window=C.WINDOW, method="correlation").dropna()
+    rho = ab.rho_from_ar(ar.values, C.N)
+    assert np.all(rho <= 1.0 + 1e-9)
+    assert np.all(rho >= -1.0 / (C.N - 1) - 1e-6)
 
 
-def test_synthetic_data_generator(tmp_path):
-    from irdpfn.synthetic_data import generate_panel
-    out = tmp_path / "test_panel.csv"
-    df, path = generate_panel(start="2024-01-01", end="2024-06-30",
-                              out_path=out)
-    assert path == out
-    assert path.exists()
-    assert {"Date", "Provider", "AgeGroup",
-            "log_return_price", "log_return_index"} <= set(df.columns)
-    assert df["Provider"].nunique() == 5
-    assert df["AgeGroup"].nunique() == 8
+def test_augmented_below_baseline(panel):
+    ar_corr = ab.absorption_ratio(panel.R_f, window=C.WINDOW,
+                                  method="correlation").dropna()
+    ar_aug = ab.absorption_ratio(panel.R_aug, window=C.WINDOW,
+                                 method="correlation").dropna()
+    assert ar_aug.mean() < ar_corr.mean()
+
+
+# ---------------------------------------------------------------------------
+# Clustering
+# ---------------------------------------------------------------------------
+def test_clustering_runs(panel):
+    res = cl.run_clustering(panel.R_f, panel.R_bf,
+                            robustness=False, noncircularity=True)
+    assert 2 <= res.best_k <= 15
+    assert len(res.labels_hier) == C.N
+    # non-circularity table should exist and recover provider structure strongly
+    nc = res.noncircularity
+    prov = nc.loc[nc["Reference partition"].str.startswith("Provider only"),
+                  "Hierarchical"].iloc[0]
+    assert prov > 0.5
+
+
+# ---------------------------------------------------------------------------
+# Regime detection
+# ---------------------------------------------------------------------------
+def test_regime_pipeline(ar_cov):
+    res = rg.run_hmm_pipeline(ar_cov, label="test", n_seeds=5, rho_exact=False)
+    mu = res["mu"]
+    # three ordered, separated emission means
+    assert len(mu) == C.K_BASELINE
+    assert mu[0] < mu[1] < mu[2]
+    # crisis threshold sits strictly between Moderate and High means
+    assert mu[1] < res["tau"] < mu[2]
+    # tau_1 sits between Low and Moderate
+    assert mu[0] < res["tau_1"] < mu[1]
+
+
+def test_gaussian_crossing_between_means():
+    tau = rg.gaussian_crossing(0.66, 0.04, 0.93, 0.05)
+    assert 0.66 < tau < 0.93
+
+
+def test_kappa_from_persistence_monotone():
+    # higher self-persistence implies a stickier prior (larger kappa)
+    k_lo = rg.kappa_from_persistence(0.90, C.K_BASELINE)
+    k_hi = rg.kappa_from_persistence(0.99, C.K_BASELINE)
+    assert k_hi > k_lo
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+def test_interp_frame_and_correlations(panel, ar_cov):
+    res = rg.run_hmm_pipeline(ar_cov, label="test", n_seeds=5, rho_exact=False)
+    interp = dg.build_interp_frame(ar_cov, panel.R_f, panel.R_bf, panel.G_b,
+                                   res["regime_series"])
+    assert {"AR", "MAAR", "Regime"}.issubset(interp.columns)
+    corr = dg.correlation_table(interp)
+    assert "Pearson_r" in corr.columns
+    assert corr["Pearson_r"].abs().le(1.0).all()

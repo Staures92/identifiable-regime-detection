@@ -1,119 +1,108 @@
 # Identifiable Regime Detection in Pension Fund Networks
-[![DOI](https://zenodo.org/badge/1250935473.svg)](https://doi.org/10.5281/zenodo.20408012)
 
-Replication code for *Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models*.
+Reference implementation of the absorption-ratio → DTW-clustering → sticky-HMM
+regime-detection pipeline from the paper *"Identifiable Regime Detection in
+Pension Fund Networks via Sticky Hidden Markov Models"*.
 
+The empirical study uses proprietary daily NAV data for the Lithuanian
+second-pillar pension funds, which cannot be redistributed. This repository
+ships a **public synthetic panel** that reproduces the statistical structure the
+method relies on, so the full pipeline can be run and inspected end to end on
+data that is safe to share. The synthetic data is a structural stand-in, **not**
+a reproduction of the paper's numbers — see
+[`docs/methodology_notes.md`](docs/methodology_notes.md) §5 for the caveats.
 
-This repository computes a rolling-window absorption ratio on a panel of pension fund returns, identifies clusters of co-moving funds with DTW + Ward, and detects regime structure in the absorption ratio with a sticky Hidden Markov Model fit by EM and validated by Bayesian inference under label-switching-corrected identifiability diagnostics. The included synthetic dataset lets you run the full pipeline end-to-end without access to the real data.
+---
+
+## Install
+
+```bash
+git clone https://github.com/Staures92/identifiable-regime-detection
+cd identifiable-regime-detection
+pip install -e .            # core pipeline
+pip install -e ".[bayes]"   # + NUTS identifiability sweep (optional, slow)
+pip install -e ".[test]"    # + pytest
+```
+
+Python ≥ 3.10. The scripts also run without installation (each adds `src/` to the
+path), so `python scripts/01_absorption_ratio.py` works straight after cloning.
+
+## Run
+
+```bash
+python scripts/run_all.py            # fast: synthetic data, no NUTS  (~5 min)
+python scripts/run_all.py --full     # paper-grade settings + NUTS    (slow)
+```
+
+or step by step:
+
+```bash
+python scripts/00_generate_synthetic_data.py   # writes data/pension_fund_synthetic.csv
+python scripts/01_absorption_ratio.py          # AR_t, estimators, lead-lag
+python scripts/02_clustering.py                # DTW clusters, non-circularity
+python scripts/03_regime_detection.py          # EM-HMM, threshold τ, robustness
+python scripts/04_diagnostics.py               # correlations, regime OLS, MAAR
+```
+
+Figures land in `figures/`, tables in `outputs/`. The annotated walk-through is
+[`notebooks/pipeline.ipynb`](notebooks/pipeline.ipynb).
+
+Heavy options are flags, so the default run is fast and offline:
+
+```bash
+python scripts/02_clustering.py --n-init 20 --max-iter 100   # paper k-means budget
+python scripts/03_regime_detection.py --bayes --n-seeds 200  # NUTS + more EM restarts
+```
+
+## Test
+
+```bash
+pytest -q
+```
+
+---
 
 ## Repository layout
 
 ```
 identifiable-regime-detection/
-src/irdpfn/                  # Importable package
- - config.py                  Project-wide constants and paths
- - data_io.py                 Loading, pivoting, benchmark download
- - absorption.py              AR_t, risk decomposition, alt. covariances
- - clustering.py              DTW + Ward + robustness checks
- - regime.py                  HMM (EM + Bayesian NUTS)
- - diagnostics.py             Correlation tests, regime regression
- - figures.py                 All publication figures
- - synthetic_data.py          Synthetic dataset generator
-scripts/                    # Pipeline runners
- - 00_generate_synthetic_data.py
- - 01_absorption_ratio.py
- - 02_clustering.py
- - 03_regime_detection.py
- -  04_diagnostics.py
- - run_all.py
-data/                       # Input data (synthetic dataset written here)
- - figures/                    # Generated PDFs
- - outputs/                    # CSV tables and intermediate results
- - tests/                      # Smoke test
- - docs/                       # Supplementary notes
- - requirements.txt
- - LICENSE
-README.md
+├── data/                      # synthetic panel (generated)
+├── docs/methodology_notes.md  # decisions + synthetic-data caveats
+├── figures/                   # generated PDFs
+├── outputs/                   # generated CSVs
+├── notebooks/pipeline.ipynb   # annotated end-to-end walk-through
+├── scripts/                   # 00–04 + run_all.py (thin orchestrators)
+├── src/irdpfn/                # the package
+│   ├── config.py              # paths, constants, plotting style, event windows
+│   ├── synthetic_data.py      # public stand-in generator
+│   ├── data_io.py             # panel assembly, R_f / R_bf / G_b / R_aug
+│   ├── absorption.py          # absorption ratio, estimators, lead-lag
+│   ├── clustering.py          # DTW clustering + non-circularity
+│   ├── regime.py              # EM-HMM, thresholds, robustness, sticky NUTS
+│   ├── diagnostics.py         # correlations, regime OLS, MAAR amplification
+│   └── figures.py             # all figures
+└── tests/test_pipeline.py     # smoke + property tests
 ```
 
-## Installation
+## Method at a glance
 
-Requires Python 3.14.3 or newer.
+| Stage | What it does | Key choices |
+| --- | --- | --- |
+| Absorption ratio | PC1 variance share over a 60-day window | covariance **and** scale-free correlation form; augmented `A = [R_f \| R_bf \| G_b]`, N = 85 |
+| Clustering | DTW dissimilarity + average linkage | silhouette in DTW geometry → `K*`; non-circularity vs label partitions |
+| Regime detection | Gaussian EM-HMM on `AR_t` | BIC over K; `K = 3` baseline; crisis threshold τ from equal-density Gaussian crossing |
+| Identifiability | sticky HMM via NUTS | κ calibrated from EM persistence; `K = 3` posterior-identifiable |
+| Diagnostics | interpret + stress-test | regime-conditional OLS (HAC), augmented agreement + permutation, per-cluster MAAR |
 
-```bash
-git clone https://github.com/Staures92/identifiable-regime-detection
-cd identifiable-regime-detection
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+Full detail, including the overlap-window defence and the synthetic-data
+limitations, is in [`docs/methodology_notes.md`](docs/methodology_notes.md).
 
-JAX is installed in CPU mode by default. The Bayesian sweep in Step 03 runs in roughly 15-30 minutes on a modern CPU; on a GPU it is much faster. To use GPU JAX, follow the [official JAX installation guide](https://github.com/google/jax#installation).
+## Citing
 
-## Running the pipeline
-
-### Option 1 — Everything at once
-
-```bash
-python scripts/run_all.py
-```
-
-This runs steps 00 to 04 in order and writes all figures to `figures/` and tables to `outputs/`.
-
-### Option 2 — One step at a time
-
-```bash
-python scripts/00_generate_synthetic_data.py   # creates data/pension_fund_synthetic.csv
-python scripts/01_absorption_ratio.py          # AR_t, risk decomposition
-python scripts/02_clustering.py                # DTW + Ward clustering
-python scripts/03_regime_detection.py          # HMM regimes
-python scripts/04_diagnostics.py               # cross-step diagnostics
-```
-
-To skip the slow Bayesian sweep in Step 03, open `scripts/03_regime_detection.py` and set `RUN_BAYESIAN = False`. The EM-based analysis, regime characterisation, and downstream diagnostics will still run.
-
-## Using your own data
-
-The pipeline expects a CSV with the columns `Date`, `Provider`, `AgeGroup`, `log_return_price`, `log_return_index`. To use real data instead of the synthetic dataset, place it at `data/pension_fund_real.csv` and update `DEFAULT_DATA_FILE` in `src/irdpfn/config.py`.
-
-## Figures
-
-All figures are numbered to match the paper.
-
-| File | Description |
-|---|---|
-| `fig01_return_series.pdf` | Returns: R^(f), R^(b,f), R^(b,g) |
-| `fig02_ar_benchmarks_events.pdf` | AR_t with event shading |
-| `fig03_ar_benchmarks_regimes.pdf` | AR_t with HMM regime shading |
-| `fig04_ar_baseline_vs_augmented.pdf` | Baseline vs augmented AR_t |
-| `fig05_dendrogram.pdf` | Ward + DTW dendrogram |
-| `fig06_cluster_heatmap.pdf` | Cluster heatmap (provider x cohort) |
-| `fig07_emission_distributions.pdf` | HMM emission densities + thresholds |
-| `fig08_cluster_regime_tracking_error.pdf` | Cluster x regime tracking error |
-| `fig09_scatter_correlations.pdf` | AR_t vs benchmarks (scatter + OLS) |
-| `fig10_regime_conditional_scatter.pdf` | Regime-conditional regression |
-| `fig11_risk_decomposition.pdf` | Systematic vs specific risk |
-| `fig12_covariance_comparison.pdf` | Sample vs Ledoit-Wolf vs MCD |
-
-## Testing
-
-A quick smoke test confirms the pipeline runs end-to-end on a small synthetic sample:
-
-```bash
-python -m pytest tests/
-```
-
-## Citation
-
-If you use this code, please cite both the manuscript and the software:
-
-**Manuscript:**
-> Megang Nkamga, J. S., & Kabašinskas, A. (2026). Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models. Working paper, Kaunas University of Technology.
-
-**Software:**
-> Megang Nkamga, J. S., & Kabašinskas, A. (2026). Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models (v1.0.0) [Software]. Zenodo. https://doi.org/10.5281/zenodo.20408012
-
+See [`CITATION.cff`](CITATION.cff). Software concept DOI:
+[10.5281/zenodo.20408012](https://doi.org/10.5281/zenodo.20408012).
 
 ## License
 
-MIT — see `LICENSE`.
+MIT — see [`LICENSE`](LICENSE). The synthetic data carries the same license; the
+underlying real pension-fund NAV data is not included and is not redistributable.

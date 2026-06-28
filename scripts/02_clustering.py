@@ -1,122 +1,79 @@
 """
-Step 02 — DTW hierarchical clustering with robustness checks.
+Step 02 — DTW clustering of fund-level dynamics.
 
-Outputs:
-    step02_db_scores_ward.csv
-    step02_cluster_composition_K{star}.csv
-    step02_robustness_kmeans_euclidean.csv
-    step02_robustness_kmeans_dtw.csv
-    step02_cross_method_ari.csv
-    step02_nested_hierarchy.csv
+Standardises the fund returns, builds a DTW dissimilarity matrix, and forms an
+average-linkage hierarchy. K* is selected by the silhouette computed in DTW
+geometry. Robustness is assessed against DTW k-means and against
+correlation / raw-Euclidean k-means (ARI). The non-circularity check shows the
+return-based clusters recover the provider x lifecycle design without being a
+label tautology.
 
-Figures:
-    fig05_dendrogram.pdf
-    fig06_cluster_heatmap.pdf
+DTW k-means dominates the runtime, so ``--n-init`` / ``--max-iter`` expose the
+k-means restart budget. Defaults are modest so the script finishes quickly on
+the public synthetic panel; raise them to reproduce paper-grade robustness.
+
+Run:  python scripts/02_clustering.py [--n-init 20] [--max-iter 100]
 """
+import sys as _sys, pathlib as _pl
+_sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1] / "src"))
 
-import sys
-from pathlib import Path
+import argparse
+import warnings
 
-import pandas as pd
+from irdpfn import data_io, clustering as cl, figures as fig, config as C
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from irdpfn.clustering import (
-    cluster_composition,
-    compute_dtw_linkage,
-    cross_method_ari,
-    db_score_sweep_ward,
-    nested_hierarchy,
-    robustness_kmeans_dtw,
-    robustness_kmeans_euclidean,
-)
-from irdpfn.config import K_CLUSTER_STAR, OUTPUTS_DIR
-from irdpfn.data_io import load_and_align
-from irdpfn.figures import fig05_dendrogram, fig06_cluster_heatmap
+warnings.filterwarnings("ignore")
 
 
 def main():
-    # 1. Load and align
-    df, R_f, R_bf, R_bg, R_aug = load_and_align()
-    print(f"Loaded panel: {df.shape}")
+    p = argparse.ArgumentParser()
+    p.add_argument("--n-init", type=int, default=5,
+                   help="k-means restarts (paper uses 20)")
+    p.add_argument("--max-iter", type=int, default=30,
+                   help="k-means max iterations (paper uses 100)")
+    p.add_argument("--no-robustness", action="store_true",
+                   help="skip the slow k-means robustness block")
+    args = p.parse_args()
 
-    # 2. DTW + Ward
-    print("\nComputing DTW distance matrix and Ward linkage...")
-    Z, R_f_scaled, fund_names = compute_dtw_linkage(R_f)
+    print("=" * 70)
+    print("STEP 02 — DTW clustering")
+    print("=" * 70)
 
-    # 3. DB score sweep
-    db = db_score_sweep_ward(Z, R_f_scaled)
-    db_df = pd.DataFrame({"K": list(db.keys()),
-                          "DB_ward_dtw": list(db.values())})
-    db_df.to_csv(OUTPUTS_DIR / "step02_db_scores_ward.csv", index=False)
-    print("\nDavies-Bouldin (Ward + DTW):")
-    print(db_df.to_string(index=False))
+    panel = data_io.load_panel()
+    res = cl.run_clustering(panel.R_f, panel.R_bf,
+                            robustness=not args.no_robustness,
+                            noncircularity=not args.no_robustness,
+                            kmeans_n_init=args.n_init,
+                            kmeans_max_iter=args.max_iter)
 
-    K_star = min(db, key=db.get)
-    print(f"\nOptimal K_c* = {K_star}  (configured: {K_CLUSTER_STAR})")
+    print(f"\nBest K by DTW silhouette: K* = {res.best_k}")
+    print(res.silhouette.to_string(index=False))
 
-    # 4. Cluster composition
-    cluster_df, comp_summary = cluster_composition(
-        Z, fund_names, R_f, R_bf, K_CLUSTER_STAR,
-    )
-    cluster_df.to_csv(
-        OUTPUTS_DIR / f"step02_cluster_assignments_K{K_CLUSTER_STAR}.csv",
-        index=False,
-    )
-    comp_summary[["Cluster", "N_funds", "Mean_TE"]].to_csv(
-        OUTPUTS_DIR / f"step02_cluster_composition_K{K_CLUSTER_STAR}.csv",
-        index=False,
-    )
-    print(f"\nCluster composition (K={K_CLUSTER_STAR}):")
-    for _, row in comp_summary.iterrows():
-        print(f"  C{row['Cluster']} (n={row['N_funds']}, "
-              f"TE={row['Mean_TE']:.6f}): {row['Funds']}")
+    if res.ari is not None:
+        print("\nAlgorithm / distance-measure robustness (ARI):")
+        for k, v in res.ari.items():
+            print(f"  {k:<32} {v:.4f}")
 
-    # 5. Robustness — k-means Euclidean
-    print("\nRobustness 1: K-means (Euclidean)")
-    rob_eucl = robustness_kmeans_euclidean(R_f_scaled, Z)
-    rob_eucl.to_csv(OUTPUTS_DIR / "step02_robustness_kmeans_euclidean.csv",
-                    index=False)
-    print(rob_eucl.to_string(index=False))
+    if res.noncircularity is not None:
+        print("\nNon-circularity (ARI vs label-only partitions):")
+        print(res.noncircularity.to_string(index=False))
 
-    # 6. Robustness — k-means DTW
-    # NOTE: TimeSeriesKMeans with DTW barycenters is O(T^2) per iteration
-    # per pairwise alignment; we subsample to 200 dates to keep it tractable.
-    print("\nRobustness 2: K-means (DTW barycenters) — subsampled to 200 dates")
-    rob_dtw, ts_data = robustness_kmeans_dtw(
-        R_f_scaled, Z, K_range=range(2, 9),
-        max_iter=10, n_init=2, subsample_dates=200,
-    )
-    rob_dtw.to_csv(OUTPUTS_DIR / "step02_robustness_kmeans_dtw.csv",
-                   index=False)
-    print(rob_dtw.to_string(index=False))
+    cluster_df = cl.cluster_frame(res, which="hier")
+    print("\nCluster composition (hierarchical):")
+    print(cl.cluster_composition(res.labels_hier, res.fund_names,
+                                 panel.R_f, panel.R_bf).to_string(index=False))
 
-    # 7. ARI across methods
-    ari = cross_method_ari(Z, R_f_scaled, ts_data, k=K_CLUSTER_STAR)
-    ari_df = pd.DataFrame([
-        {"comparison": "ward_vs_kmeans_eucl",
-         "ARI": ari["ward_vs_kmeans_eucl"]},
-        {"comparison": "ward_vs_kmeans_dtw",
-         "ARI": ari["ward_vs_kmeans_dtw"]},
-        {"comparison": "kmeans_eucl_vs_dtw",
-         "ARI": ari["kmeans_eucl_vs_dtw"]},
-    ])
-    ari_df.to_csv(OUTPUTS_DIR / "step02_cross_method_ari.csv", index=False)
-    print(f"\nAdjusted Rand Index across methods (K={K_CLUSTER_STAR}):")
-    print(ari_df.to_string(index=False))
+    # --- persist + figures ---------------------------------------------------
+    res.silhouette.to_csv(C.OUTPUTS_DIR / "step02_silhouette.csv", index=False)
+    cluster_df.to_csv(C.OUTPUTS_DIR / "step02_clusters.csv", index=False)
+    if res.noncircularity is not None:
+        res.noncircularity.to_csv(C.OUTPUTS_DIR / "step02_noncircularity.csv",
+                                  index=False)
 
-    # 8. Nested K=8 -> K=15
-    nested, n_singletons = nested_hierarchy(
-        Z, fund_names, R_f, R_bf, k_outer=8, k_inner=15,
-    )
-    nested.to_csv(OUTPUTS_DIR / "step02_nested_hierarchy.csv", index=False)
-    print(f"\nK=15 singletons: {n_singletons}/15")
-
-    # 9. Figures
-    fig05_dendrogram(Z, fund_names, k_star=K_CLUSTER_STAR)
-    fig06_cluster_heatmap(cluster_df, k_star=K_CLUSTER_STAR)
-
-    print("\nStep 02 complete.")
+    fig.fig_dendrogram(res)
+    fig.fig_cluster_heatmap(res, which="dtw" if res.labels_dtw is not None else "hier")
+    print(f"\nFigures + tables written to {C.FIGURES_DIR} and {C.OUTPUTS_DIR}")
+    print("Step 02 complete.")
 
 
 if __name__ == "__main__":

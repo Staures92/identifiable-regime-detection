@@ -1,173 +1,156 @@
 """
-Hierarchical clustering of pension funds.
+DTW clustering of fund return dynamics.
 
-Methodology
------------
-- Standardise R_f columns (z-score by fund).
-- Compute pairwise DTW distance matrix.
-- Apply Ward linkage; cut at K = K_c* = 8.
-
-Robustness
-----------
-- K-means on standardised returns (Euclidean).
-- TimeSeriesKMeans with DTW barycenters.
-- Cross-method agreement via Adjusted Rand Index.
-- Nested K=8 -> K=15 hierarchy.
+Standardise each fund's return series, build the DTW dissimilarity matrix,
+cluster with average linkage, and select K* by the DTW-geometry silhouette.
+Robustness spans algorithm (k-means) and metric (correlation, raw Euclidean);
+a non-circularity check shows the recovered clusters track return co-movement
+rather than merely echoing the provider x cohort labels.
 """
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-
-from sklearn.cluster import KMeans
-from sklearn.metrics import davies_bouldin_score, adjusted_rand_score
-from sklearn.preprocessing import StandardScaler
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score, adjusted_rand_score
 from dtaidistance import dtw
 from tslearn.clustering import TimeSeriesKMeans
 from tslearn.utils import to_time_series_dataset
 
-from .config import K_CLUSTER_RANGE, K_CLUSTER_STAR
+from . import config as C
 
 
-# =========================================================
-# 1. DTW DISTANCE MATRIX + WARD LINKAGE
-# =========================================================
-def compute_dtw_linkage(R_f):
-    """
-    Returns
-    -------
-    Z          : Ward linkage matrix
-    R_f_scaled : standardised returns (T x N)
-    fund_names : column labels (length N)
-    """
-    scaler     = StandardScaler()
-    R_f_scaled = scaler.fit_transform(R_f)
-    fund_names = R_f.columns.tolist()
-
-    dtw_matrix = dtw.distance_matrix_fast(R_f_scaled.T)
-    np.fill_diagonal(dtw_matrix, 0)
-
-    Z = linkage(squareform(dtw_matrix), method="ward")
-    return Z, R_f_scaled, fund_names
+@dataclass
+class ClusterResult:
+    fund_names: list
+    dtw_matrix: np.ndarray
+    linkage: np.ndarray
+    silhouette: pd.DataFrame
+    best_k: int
+    labels_hier: np.ndarray
+    labels_dtw: np.ndarray = None
+    labels_corr: np.ndarray = None
+    labels_euc: np.ndarray = None
+    ari: dict = field(default_factory=dict)
+    noncircularity: pd.DataFrame = None
 
 
-# =========================================================
-# 2. DB SCORE SWEEP (Ward + DTW)
-# =========================================================
-def db_score_sweep_ward(Z, R_f_scaled, K_range=K_CLUSTER_RANGE):
-    """Davies-Bouldin score over K range for Ward+DTW labels."""
-    db = {}
-    for k in K_range:
-        labels = fcluster(Z, k, criterion="maxclust")
-        db[k]  = davies_bouldin_score(R_f_scaled.T, labels)
-    return db
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _cluster_te(R_f, R_bf, funds):
+    """Mean absolute active return (tracking error) over a set of funds."""
+    return (R_f[funds] - R_bf[funds]).abs().mean().mean()
 
 
-# =========================================================
-# 3. CLUSTER COMPOSITION AND TRACKING ERROR
-# =========================================================
-def cluster_composition(Z, fund_names, R_f, R_bf, k):
-    """Return per-cluster fund list and mean tracking error."""
-    labels = fcluster(Z, k, criterion="maxclust")
-    df = pd.DataFrame({"Fund": fund_names, "Cluster": labels})
-
+def cluster_composition(labels, fund_names, R_f, R_bf) -> pd.DataFrame:
+    """Per-cluster fund membership and mean tracking error."""
     rows = []
-    for c in sorted(df["Cluster"].unique()):
-        funds = df[df["Cluster"] == c]["Fund"].tolist()
-        te    = (R_f[funds] - R_bf[funds]).abs().mean().mean()
-        rows.append({"Cluster": c, "N_funds": len(funds),
-                     "Mean_TE": te, "Funds": funds})
-    return df, pd.DataFrame(rows)
-
-
-# =========================================================
-# 4. ROBUSTNESS — K-means (Euclidean and DTW barycenters)
-# =========================================================
-def robustness_kmeans_euclidean(R_f_scaled, Z, K_range=range(2, 9)):
-    """Compare Ward+DTW vs K-means (Euclidean) over K range."""
-    rows = []
-    for k in K_range:
-        km     = KMeans(n_clusters=k, n_init=20, random_state=42)
-        labels = km.fit_predict(R_f_scaled.T)
-        db_km  = davies_bouldin_score(R_f_scaled.T, labels)
-        db_w   = davies_bouldin_score(R_f_scaled.T,
-                                      fcluster(Z, k, criterion="maxclust"))
-        rows.append({"K": k, "DB_kmeans": db_km, "DB_ward": db_w,
-                     "Ward_better": db_w < db_km})
+    for cid in sorted(np.unique(labels)):
+        funds = [fund_names[i] for i in np.where(labels == cid)[0]]
+        rows.append({"Cluster": int(cid), "n_funds": len(funds),
+                     "mean_TE": round(_cluster_te(R_f, R_bf, funds), 6),
+                     "funds": ", ".join(funds)})
     return pd.DataFrame(rows)
 
 
-def robustness_kmeans_dtw(R_f_scaled, Z, K_range=range(2, 9),
-                          max_iter=10, n_init=2, subsample_dates=None):
-    """
-    Compare Ward+DTW vs TimeSeriesKMeans (DTW barycenters).
-
-    The DTW barycenter computation is O(T^2) per pairwise alignment per
-    iteration, so for long series we optionally subsample dates uniformly.
-    """
-    if subsample_dates is not None and subsample_dates < R_f_scaled.shape[0]:
-        idx = np.linspace(0, R_f_scaled.shape[0] - 1,
-                          subsample_dates).astype(int)
-        R_f_sub = R_f_scaled[idx]
-    else:
-        R_f_sub = R_f_scaled
-
-    N = R_f_sub.shape[1]
-    ts_data = to_time_series_dataset([R_f_sub.T[i, :] for i in range(N)])
-
-    rows = []
-    for k in K_range:
-        km = TimeSeriesKMeans(
-            n_clusters=k, metric="dtw", n_init=n_init,
-            max_iter=max_iter, random_state=42, n_jobs=-1,
-        )
-        labels = km.fit_predict(ts_data)
-        db_km  = davies_bouldin_score(R_f_sub.T, labels)
-        db_w   = davies_bouldin_score(R_f_scaled.T,
-                                      fcluster(Z, k, criterion="maxclust"))
-        rows.append({"K": k, "DB_kmeans_dtw": db_km, "DB_ward": db_w,
-                     "Ward_better": db_w < db_km})
-    return pd.DataFrame(rows), ts_data
+def _run_kmeans(data, metric, k, seed=C.SEED, n_init=20, max_iter=100):
+    km = TimeSeriesKMeans(n_clusters=k, metric=metric, n_init=n_init,
+                          max_iter=max_iter, random_state=seed, n_jobs=-1)
+    return km.fit_predict(data)
 
 
-# =========================================================
-# 5. ARI BETWEEN METHODS
-# =========================================================
-def cross_method_ari(Z, R_f_scaled, ts_data, k=K_CLUSTER_STAR,
-                     max_iter=10, n_init=2):
-    """Adjusted Rand Index between Ward, K-means Euclidean, K-means DTW."""
-    ward = fcluster(Z, k, criterion="maxclust")
-    km_e = KMeans(n_clusters=k, n_init=20, random_state=42)\
-                .fit_predict(R_f_scaled.T)
-    km_d = TimeSeriesKMeans(n_clusters=k, metric="dtw", n_init=n_init,
-                            max_iter=max_iter, random_state=42, n_jobs=-1)\
-                .fit_predict(ts_data)
+def _encode(values):
+    keys = {v: i for i, v in enumerate(sorted(set(values)))}
+    return np.array([keys[v] for v in values])
 
-    return {
-        "ward_vs_kmeans_eucl": adjusted_rand_score(ward, km_e),
-        "ward_vs_kmeans_dtw":  adjusted_rand_score(ward, km_d),
-        "kmeans_eucl_vs_dtw":  adjusted_rand_score(km_e, km_d),
-        "labels_ward":         ward,
-        "labels_kmeans_eucl":  km_e,
-        "labels_kmeans_dtw":   km_d,
+
+# ---------------------------------------------------------------------------
+# Main pipeline
+# ---------------------------------------------------------------------------
+def run_clustering(R_f, R_bf, k_min=2, k_max=15,
+                   robustness=True, noncircularity=True,
+                   kmeans_n_init=20, kmeans_max_iter=100) -> ClusterResult:
+    fund_names = R_f.columns.tolist()
+    n = len(fund_names)
+
+    R_f_scaled = StandardScaler().fit_transform(R_f)          # T x N, z-scored
+    series_std = R_f_scaled.T                                 # N x T
+
+    dtw_matrix = dtw.distance_matrix_fast(series_std)
+    np.fill_diagonal(dtw_matrix, 0.0)
+    Z = linkage(squareform(dtw_matrix), method="average")
+
+    sil_rows = []
+    for k in range(k_min, k_max + 1):
+        labels_k = fcluster(Z, k, criterion="maxclust")
+        sil = silhouette_score(dtw_matrix, labels_k, metric="precomputed")
+        sil_rows.append({"K": k, "DTW_Silhouette": sil})
+    silhouette = pd.DataFrame(sil_rows)
+    best_k = int(silhouette.loc[silhouette["DTW_Silhouette"].idxmax(), "K"])
+
+    labels_hier = fcluster(Z, best_k, criterion="maxclust")
+
+    res = ClusterResult(fund_names=fund_names, dtw_matrix=dtw_matrix, linkage=Z,
+                        silhouette=silhouette, best_k=best_k,
+                        labels_hier=labels_hier)
+
+    if robustness:
+        ts_std = to_time_series_dataset([series_std[i] for i in range(n)])
+        ts_raw = to_time_series_dataset([R_f.values.T[i] for i in range(n)])
+        res.labels_dtw = _run_kmeans(ts_std, "dtw", best_k,
+                                     n_init=kmeans_n_init, max_iter=kmeans_max_iter)
+        # correlation k-means == Euclidean on standardised series
+        res.labels_corr = _run_kmeans(ts_std, "euclidean", best_k,
+                                      n_init=kmeans_n_init, max_iter=kmeans_max_iter)
+        res.labels_euc = _run_kmeans(ts_raw, "euclidean", best_k,
+                                     n_init=kmeans_n_init, max_iter=kmeans_max_iter)
+        res.ari = {
+            "DTW(avg-link) vs DTW k-means": adjusted_rand_score(labels_hier, res.labels_dtw),
+            "DTW k-means vs Correlation":   adjusted_rand_score(res.labels_dtw, res.labels_corr),
+            "DTW k-means vs Euclidean(raw)": adjusted_rand_score(res.labels_dtw, res.labels_euc),
+            "Correlation vs Euclidean(raw)": adjusted_rand_score(res.labels_corr, res.labels_euc),
+        }
+
+    if noncircularity:
+        res.noncircularity = noncircularity_table(res)
+
+    return res
+
+
+def noncircularity_table(res: ClusterResult) -> pd.DataFrame:
+    """ARI of return-based clusters against label-only reference partitions."""
+    providers = [f.split("_")[0] for f in res.fund_names]
+    cohorts = [f.split("_")[1] for f in res.fund_names]
+    segment = ["Conservative" if c in C.CONSERVATIVE_COHORTS else "Growth"
+               for c in cohorts]
+
+    refs = {
+        "Provider only (5)": _encode(providers),
+        "Lifecycle segment (2)": _encode(segment),
+        "Cohort only (8)": _encode(cohorts),
+        "Provider x segment (10)": _encode(list(zip(providers, segment))),
     }
+    rows = []
+    for name, ref in refs.items():
+        row = {"Reference partition": name,
+               "Hierarchical": round(adjusted_rand_score(ref, res.labels_hier), 4)}
+        if res.labels_dtw is not None:
+            row["DTW k-means"] = round(adjusted_rand_score(ref, res.labels_dtw), 4)
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
-# =========================================================
-# 6. NESTED HIERARCHY (K=8 → K=15)
-# =========================================================
-def nested_hierarchy(Z, fund_names, R_f, R_bf, k_outer=8, k_inner=15):
-    """Examine how K_inner clusters nest inside K_outer clusters."""
-    labels_outer = fcluster(Z, k_outer, criterion="maxclust")
-    labels_inner = fcluster(Z, k_inner, criterion="maxclust")
-    te_per_fund  = (R_f - R_bf).abs().mean()
-
-    nested = pd.DataFrame({
-        "Fund": fund_names,
-        f"K{k_outer}":  labels_outer,
-        f"K{k_inner}":  labels_inner,
-        "TE":           [te_per_fund[f] for f in fund_names],
+def cluster_frame(res: ClusterResult, which: str = "hier") -> pd.DataFrame:
+    """Tidy Fund/Provider/AgeCohort/Cluster frame for figures and MAAR tables."""
+    labels = {"hier": res.labels_hier, "dtw": res.labels_dtw}[which]
+    return pd.DataFrame({
+        "Fund": res.fund_names,
+        "Provider": [f.split("_")[0] for f in res.fund_names],
+        "AgeCohort": [f.split("_")[1] for f in res.fund_names],
+        "Cluster": labels,
     })
-    n_singletons = (pd.Series(labels_inner).value_counts() == 1).sum()
-    return nested, n_singletons

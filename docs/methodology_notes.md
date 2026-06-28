@@ -1,43 +1,134 @@
-# Methodology Notes
+# Methodology notes
 
-Supplementary notes on implementation choices that aren't obvious from the code.
+This document records the methodological decisions encoded in the package, in
+the order the pipeline applies them, and the ways the **public synthetic panel**
+differs from the proprietary data used in the paper.
 
-## Absorption ratio: regularisation policy
+---
 
-The baseline absorption ratio is computed on `R_f` (40 funds, 60-day window). Since `N = 40 < omega = 60`, the sample covariance matrix is full-rank and no regularisation is needed. Adding `epsilon * I` to the baseline materially distorts `AR_t` (differences of 0.01 to 0.04 across windows — see `outputs/step01_regularisation_verification.csv`).
+## 1. Data and return matrices
 
-The augmented matrix `R_aug = [R_f | R_bf | R_bg]` has 83 columns. With `omega = 60`, the covariance matrix is rank-deficient and `epsilon * I` is required. The code in `irdpfn.absorption.compute_absorption_ratio` switches on this automatically by checking `N > window`.
+The panel is 40 second-pillar pension funds (5 providers × 8 age cohorts) over
+roughly 1,700 trading days. Three matrices are built per date:
 
-## Clustering: why Ward + DTW over k-means
+| Symbol | Meaning | Columns |
+| --- | --- | --- |
+| `R_f`   | fund log-returns                          | 40 |
+| `R_bf`  | matched benchmark log-returns             | 40 |
+| `G_b`   | global factors (3 equity + 2 yield shocks)| 5  |
 
-K-means with DTW barycenters is theoretically problematic because DTW is a semi-metric (it satisfies positivity and symmetry but fails the triangle inequality). Centroids in DTW space are not well-defined, and the iteration is not guaranteed to converge to a stable solution. Ward linkage requires only a pairwise dissimilarity matrix and extends naturally to non-Euclidean metrics (Randriamihamison et al., 2020).
-
-The robustness checks in `irdpfn.clustering` confirm this empirically: Ward + DTW achieves equal or better Davies-Bouldin scores than both k-means (Euclidean) and TimeSeriesKMeans (DTW barycenters) across the full K range. The Adjusted Rand Index between methods at K = 8 is reported in `outputs/step02_cross_method_ari.csv`.
-
-## HMM: kappa calibration
-
-The sticky HMM prior uses a Dirichlet distribution with concentration `alpha * 1 + kappa * e_k` for row `k` of the transition matrix. The expected self-transition probability is
+The augmented matrix is the concatenation
 
 ```
-E[pi_kk] = (alpha + kappa) / (K * alpha + kappa)
+A = [ R_f | R_bf | G_b ]   ∈ R^{T × 85}
 ```
 
-With `alpha = 1`, inverting this gives `kappa = (K * p - 1) / (1 - p)` where `p` is the target persistence. The code calibrates `p` from the diagonals of the EM-fitted transition matrix at K = 3 and K = 5, giving two data-driven kappa values that are validated against each other and against a sensitivity grid (`kappa in {10, 20, 30, 50}`).
+with `M = 5` global factors (MSCI World, MSCI Europe, S&P 500, plus the daily
+changes in the 10Y and 2Y euro-area AAA yields, in basis points).
 
-## HMM: identifiability under label switching
+## 2. Absorption ratio
 
-Bayesian HMMs are subject to label switching across chains and draws: the same regime may be labelled differently in different chains. Raw R-hat values are therefore unreliable. The code in `irdpfn.regime.relabel_samples_by_chain` sorts emission means within each `(chain, draw)` and recomputes R-hat on the relabelled samples. A regime is considered identified if its corrected R-hat is below 1.1.
+For a rolling window `W` (baseline 60 trading days) the absorption ratio is the
+share of total variance captured by the first principal component,
 
-## Diagnostics: HAC standard errors
+```
+AR_t = λ_1 / Σ_j λ_j
+```
 
-The regime-conditional regression uses Newey-West HAC standard errors to account for the autocorrelation in daily AR_t. The lag length is set by the rule of thumb `L = floor(4 * (T/100)^(2/9))` (Newey and West, 1987).
+computed two ways:
 
-## Synthetic data generator
+* **Covariance** form on `R_f` — the baseline used for regime detection.
+* **Correlation** form — scale-free, with the exact identity
+  `rho_bar = (N · AR − 1) / (N − 1)` linking `AR_t` to the mean off-diagonal
+  correlation. This is what makes mixing equity log-returns with basis-point
+  yield shocks in the augmented matrix legitimate: the correlation operator
+  removes the unit mismatch that a covariance operator would amplify.
 
-The generator in `irdpfn.synthetic_data` is calibrated to reproduce the qualitative features that matter for the pipeline:
+Ridge regularisation is applied to the window covariance **only when `N > W`**
+(i.e. when the sample covariance is rank-deficient); for the baseline
+`N = 40 < W = 60` it is inactive, which `regularisation_check` documents.
 
-- A sticky 3-state regime chain drives factor volatility and idiosyncratic volatility.
-- Factor loadings are monotone in age cohort (AG1 conservative, AG8 aggressive) with provider-level noise.
-- Fund-specific benchmarks track the funds with tracking error that scales with the regime.
+The augmented absorption ratio is computed in **correlation** form and is
+expected to sit *below* the baseline correlation AR on average — adding the
+benchmark and global blocks dilutes the single-factor dominance of the fund
+block.
 
-It is NOT calibrated to reproduce the exact empirical values from the real data. Reviewers running the synthetic pipeline should expect figures that look qualitatively similar in shape (three identifiable regimes, cluster structure by cohort, etc.) but with different numerical values.
+## 3. DTW clustering
+
+Fund return series are z-scored, then a DTW dissimilarity matrix is formed and
+reduced with **average linkage** (not Ward — Ward's geometric assumptions do not
+hold under DTW). `K*` is chosen by the silhouette computed **in DTW geometry**,
+not Euclidean. Robustness is reported as ARI against DTW k-means and against
+correlation / raw-Euclidean k-means.
+
+The **non-circularity** check computes ARI between the return-based clusters and
+label-only reference partitions (provider, lifecycle segment, cohort, and
+provider × segment). High ARI against provider × segment with low ARI against
+cohort alone shows the clusters reflect return co-movement structured by the
+regulatory design rather than a tautological relabelling of the inputs.
+
+## 4. Regime detection
+
+Gaussian EM-HMMs are fit across `K = 2…8`; BIC selects the model order
+(`n_params = K² + 2K − 1`). The **baseline analysis fixes `K = 3`**
+(Low / Moderate / High concentration) for interpretability, while reporting the
+BIC-optimal `K` separately.
+
+The crisis threshold `τ` is the **equal-density Gaussian crossing** between the
+Moderate and High emission densities, obtained in closed form by solving the
+quadratic `a·τ² + b·τ + c = 0` for unequal-variance Gaussians and taking the
+root between the two means. `τ_1` is the analogous Low|Moderate crossing.
+
+A sticky prior is placed on the transition matrix; the concentration `κ` is
+**calibrated from the EM transition diagonals** via
+`κ = f(mean self-persistence, K)` rather than fixed arbitrarily.
+
+### Robustness battery
+* **Correlation vs covariance** AR give near-identical regime labels (high ARI).
+* **Window length** `W ∈ {40, 60, 90, 120}` shifts `τ` smoothly; longer windows
+  raise the mean AR and the crisis share, as expected from smoothing.
+* **Overlap diagnostics.** Because rolling windows overlap, raw autocorrelation
+  is mechanically inflated up to lag `W`. The empirical ACF is compared to the
+  triangular overlap benchmark `max(0, (W − k)/W)`; mean autocorrelation
+  *beyond* the window horizon is near zero, and a disjoint-subsample
+  (overlap-free) refit recovers the same regimes.
+
+### Bayesian identifiability (optional)
+The sticky HMM is also fit with NUTS (`numpyro`). At the calibrated `κ`, the
+`K = 3` model is posterior-identifiable (label-switching resolved, R-hat ≈ 1),
+which the `--bayes` sweep reproduces. This path is gated off by default because
+it is slow.
+
+---
+
+## 5. How the synthetic panel differs from the paper data
+
+`data/pension_fund_synthetic.csv` is a **structural stand-in**, generated by
+`irdpfn.synthetic_data`. It reproduces the qualitative features the pipeline
+depends on:
+
+* a cohort **volatility ladder** (conservative AG1/TIPF floors, growth cohorts
+  more volatile),
+* **fat tails** (excess kurtosis well above Gaussian) and **negative skew**,
+* **crisis-clustered** absorption-ratio spikes aligned to the 2020 / 2022 /
+  2023 stress windows,
+* an augmented AR that sits **below** the baseline.
+
+It is **not** calibrated to reproduce the paper's exact numbers, and three
+diagnostics are deliberately degenerate on it — users should not read paper
+conclusions off the synthetic output:
+
+1. **Clusters fall cleanly by provider** (`K* ≈ 5`) because the synthetic
+   provider factor is strong and uniform across cohorts; the real data mixes
+   more and yields `K* = 10`.
+2. **Augmented vs baseline AR are almost perfectly correlated** (so the
+   crisis/calm co-movement gap is ≈ 0), because the synthetic global factors are
+   derived from the same latent market factor that drives the funds. In the real
+   data the global block carries independent information and the gap is
+   meaningful.
+3. **Per-cluster MAAR amplification ratios are ≈ 1**, for the same reason — the
+   synthetic active-return structure does not differentiate clusters in crisis.
+
+The point of the public repo is to let a reader **run and inspect the method**
+end to end on data that is safe to share, not to reproduce the empirical
+findings, which require the licensed NAV panel.

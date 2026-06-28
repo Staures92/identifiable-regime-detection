@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "irdpfn"
+version = "1.0.0"
+description = "Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Megang Nkamga Junile Staures" },
+]
+keywords = [
+    "absorption ratio", "systemic risk", "hidden Markov model",
+    "regime detection", "dynamic time warping", "pension funds",
+]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "scipy>=1.11",
+    "scikit-learn>=1.3",
+    "statsmodels>=0.14",
+    "matplotlib>=3.7",
+    "hmmlearn>=0.3",
+    "dtaidistance>=2.3",
+    "tslearn>=0.6",
+]
+
+[project.optional-dependencies]
+bayes = ["jax>=0.4", "jaxlib>=0.4", "numpyro>=0.13", "arviz>=0.16"]
+live = ["yfinance>=0.2"]
+test = ["pytest>=7.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+filterwarnings = ["ignore"]

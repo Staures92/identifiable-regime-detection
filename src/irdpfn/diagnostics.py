@@ -1,184 +1,130 @@
 """
-Diagnostic tests for the AR-benchmark relationship.
+Interpretive and robustness diagnostics for AR_t.
 
-- Pearson / Spearman / Kendall correlations with significance.
-- Regime-conditional OLS regression with HAC (Newey-West) SE.
-- Cluster x regime tracking error amplification.
+Correlations of AR_t with the interpretive series (Pearson / Spearman /
+Kendall), a regime-conditional OLS with Newey-West standard errors, the
+baseline-vs-augmented AR agreement, and a permutation test for the
+crisis-vs-calm co-movement gap.
 """
+from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy import stats as scipy_stats
-import statsmodels.api as sm
+from scipy import stats as sstats
+
+from . import config as C
 
 
-# =========================================================
-# 1. CORRELATION SIGNIFICANCE (3 measures)
-# =========================================================
-def _sig_marker(p):
-    if p < 0.001:
-        return "***"
-    if p < 0.01:
-        return "**"
-    if p < 0.05:
-        return "*"
-    return "n.s."
+def _sig(p):
+    return "***" if p < 0.001 else ("**" if p < 0.01 else ("*" if p < 0.05 else "n.s."))
 
 
-def correlation_tests(interp_df, target_col="AR",
-                      series_cols=None):
-    """
-    Compute Pearson, Spearman, Kendall correlations between `target_col`
-    and each of `series_cols`, with significance markers.
-    """
-    if series_cols is None:
-        series_cols = [c for c in interp_df.columns
-                       if c != target_col and c != "Regime"]
+# ---------------------------------------------------------------------------
+# Interpretive frame
+# ---------------------------------------------------------------------------
+def build_interp_frame(AR, R_f, R_bf, G_b, regime_series=None) -> pd.DataFrame:
+    """AR_t aligned with MAAR and the global factors (+ optional regime)."""
+    maar = (R_f - R_bf).abs().mean(axis=1).rename("MAAR")
+    g = G_b.reindex(AR.index)
+    df = pd.concat([AR.rename("AR"), maar.reindex(AR.index), g], axis=1)
+    df.columns = ["AR", "MAAR"] + list(g.columns)
+    if regime_series is not None:
+        df["Regime"] = regime_series.reindex(df.index)
+    return df.dropna()
 
-    T = len(interp_df)
+
+def correlation_table(interp_df: pd.DataFrame,
+                      series_cols=("MAAR", *C.GLOBAL_COLS)) -> pd.DataFrame:
+    """Pearson + Spearman + Kendall correlations of each series with AR_t."""
     rows = []
     for col in series_cols:
-        x = interp_df[target_col].values
-        y = interp_df[col].values
-
-        r, p_p = scipy_stats.pearsonr(x, y)
-        t_p    = r * np.sqrt((T - 2) / (1 - r**2)) if abs(r) < 1 else np.inf
-
-        rho, p_s = scipy_stats.spearmanr(x, y)
-        tau, p_k = scipy_stats.kendalltau(x, y)
-
-        rows.append({
-            "Series":       col,
-            "Pearson_r":    round(r, 4),
-            "t_statistic":  round(t_p, 4),
-            "Pearson_p":    round(p_p, 6),
-            "Pearson_sig":  _sig_marker(p_p),
-            "Spearman_rho": round(rho, 4),
-            "Spearman_p":   round(p_s, 6),
-            "Spearman_sig": _sig_marker(p_s),
-            "Kendall_tau":  round(tau, 4),
-            "Kendall_p":    round(p_k, 6),
-            "Kendall_sig":  _sig_marker(p_k),
-        })
+        x, y = interp_df["AR"], interp_df[col]
+        r, pr = sstats.pearsonr(x, y)
+        rho, ps = sstats.spearmanr(x, y)
+        tau, pk = sstats.kendalltau(x, y)
+        rows.append({"Series": col,
+                     "Pearson_r": round(r, 4), "Pearson_sig": _sig(pr),
+                     "Spearman_rho": round(rho, 4), "Spearman_sig": _sig(ps),
+                     "Kendall_tau": round(tau, 4), "Kendall_sig": _sig(pk)})
     return pd.DataFrame(rows)
 
 
-# =========================================================
-# 2. REGIME-CONDITIONAL OLS WITH HAC SE
-# =========================================================
-def regime_conditional_regression(interp_df, series_cols,
-                                  ar_col="AR", regime_col="Regime",
-                                  high_label="High-Risk"):
-    """
-    Fit y_t = b0 + b1*AR + b2*D_high + b3*(AR*D_high) + e_t for each
-    series, with Newey-West HAC standard errors.
+def regime_conditional_ols(interp_df: pd.DataFrame,
+                           series_cols=("MAAR", *C.GLOBAL_COLS)):
+    """y = b0 + b1*AR + b2*D_High + b3*(AR*D_High); HAC (Newey-West) SEs.
 
-    Returns
-    -------
-    fitted : dict[str, RegressionResults]
-    table  : DataFrame with key coefficients per series
+    Significant b3 => the AR relationship is regime-dependent (not continuous).
     """
+    import statsmodels.api as sm
     T = len(interp_df)
-    D_high = (interp_df[regime_col] == high_label).astype(int).values
-    hac_lags = int(np.floor(4 * (T / 100) ** (2 / 9)))
-
+    D_high = (interp_df["Regime"] == "High-Concentration").astype(int).values
+    hac = int(np.floor(4 * (T / 100) ** (2 / 9)))
     fitted, rows = {}, []
     for col in series_cols:
         y = interp_df[col].values
-        X = np.column_stack([
-            interp_df[ar_col].values,
-            D_high,
-            interp_df[ar_col].values * D_high,
-        ])
-        X = sm.add_constant(X)
-        res = sm.OLS(y, X).fit(cov_type="HAC", cov_kwds={"maxlags": hac_lags})
+        X = sm.add_constant(np.column_stack([
+            interp_df["AR"].values, D_high, interp_df["AR"].values * D_high]))
+        res = sm.OLS(y, X).fit(cov_type="HAC", cov_kwds={"maxlags": hac})
         fitted[col] = res
-
-        rows.append({
-            "Series":  col,
-            "b0":      round(res.params[0], 4),
-            "b1":      round(res.params[1], 4),
-            "b1_se":   round(res.bse[1],    4),
-            "b1_p":    round(res.pvalues[1],4),
-            "b2":      round(res.params[2], 4),
-            "b2_se":   round(res.bse[2],    4),
-            "b2_p":    round(res.pvalues[2],4),
-            "b3":      round(res.params[3], 4),
-            "b3_se":   round(res.bse[3],    4),
-            "b3_p":    round(res.pvalues[3],4),
-            "R2":      round(res.rsquared,  4),
-            "N":       int(res.nobs),
-            "HAC_lags": hac_lags,
-        })
-    return fitted, pd.DataFrame(rows)
+        rows.append({"Series": col,
+                     "b1": round(res.params[1], 4), "b1_p": round(res.pvalues[1], 4),
+                     "b3": round(res.params[3], 4), "b3_p": round(res.pvalues[3], 4),
+                     "R2": round(res.rsquared, 4)})
+    return pd.DataFrame(rows), fitted
 
 
-# =========================================================
-# 3. CLUSTER × REGIME TRACKING ERROR AMPLIFICATION
-# =========================================================
-def cluster_regime_tracking_error(cluster_df, R_f, R_bf,
-                                  AR_clean, regime_series,
-                                  high_label="High-Risk"):
-    """
-    For each cluster, compute mean tracking error in normal regimes vs
-    in the High-Risk regime, plus the crisis/normal amplification ratio.
+# ---------------------------------------------------------------------------
+# Augmented-AR agreement + permutation test
+# ---------------------------------------------------------------------------
+def augmented_agreement(AR_corr, AR_augmented, events=C.EVENTS):
+    """Overall / crisis / calm correlation between baseline and augmented AR."""
+    idx = AR_corr.index.intersection(AR_augmented.index)
+    b, a = AR_corr.loc[idx].values, AR_augmented.loc[idx].values
+    rho = np.corrcoef(b, a)[0, 1]
+    mask = pd.Series(False, index=idx)
+    for _n, (s, e, _c, _al) in events.items():
+        mask |= (idx >= pd.Timestamp(s)) & (idx <= pd.Timestamp(e))
+    mask = mask.values
+    rho_crisis = np.corrcoef(b[mask], a[mask])[0, 1]
+    rho_calm = np.corrcoef(b[~mask], a[~mask])[0, 1]
+    return {"idx": idx, "b": b, "a": a, "mask": mask, "rho_overall": rho,
+            "rho_crisis": rho_crisis, "rho_calm": rho_calm,
+            "gap": rho_crisis - rho_calm, "n_crisis": int(mask.sum())}
 
-    Parameters
-    ----------
-    cluster_df : DataFrame with columns ['Fund', 'Cluster']
-    """
-    te_daily = (R_f - R_bf).abs()
-    te_align = te_daily.reindex(AR_clean.index)
 
-    crisis_dates = AR_clean.index[regime_series == high_label]
-    normal_dates = AR_clean.index[regime_series != high_label]
+def permutation_gap_test(agree: dict, n_perm: int = 2000, seed: int = 42):
+    """Is the crisis-calm co-movement gap larger than random splits give?"""
+    rng = np.random.default_rng(seed)
+    b, a, mask = agree["b"], agree["a"], agree["mask"]
+    obs = agree["gap"]
+    n_c, n = int(mask.sum()), len(b)
+    null = np.empty(n_perm)
+    for i in range(n_perm):
+        m = np.zeros(n, dtype=bool)
+        m[rng.choice(n, n_c, replace=False)] = True
+        null[i] = np.corrcoef(b[m], a[m])[0, 1] - np.corrcoef(b[~m], a[~m])[0, 1]
+    p = (np.abs(null) >= abs(obs)).mean()
+    return {"observed_gap": obs, "p_perm": float(p)}
 
+
+# ---------------------------------------------------------------------------
+# Cross-step: cluster MAAR amplification, normal vs crisis
+# ---------------------------------------------------------------------------
+def cluster_maar_amplification(R_f, R_bf, cluster_df, regime_series, ar_index):
+    """Mean absolute active return per cluster in crisis vs normal regimes."""
+    maar_daily = (R_f - R_bf).abs().reindex(ar_index)
+    crisis = ar_index[regime_series == "High-Concentration"]
+    normal = ar_index[regime_series != "High-Concentration"]
     rows = []
-    for c in sorted(cluster_df["Cluster"].unique()):
-        funds = cluster_df[cluster_df["Cluster"] == c]["Fund"].tolist()
-        te_c  = te_align[funds].mean(axis=1)
-
-        te_n = te_c.loc[normal_dates].mean()
-        te_x = te_c.loc[crisis_dates].mean()
-        ratio = te_x / te_n if te_n > 0 else np.nan
-
-        ag_labels = sorted({f.split("_")[1] for f in funds})
-        cohort_type = ("Extreme (AG1+AG8)"
-                       if all(ag in ["AG1", "AG8"] for ag in ag_labels)
-                       else "Middle (AG2-AG7)")
-
-        rows.append({
-            "Cluster":      f"C{c}",
-            "N_funds":      len(funds),
-            "TE_normal":    te_n,
-            "TE_crisis":    te_x,
-            "Ratio":        ratio,
-            "Cohort_type":  cohort_type,
-            "Funds":        funds,
-        })
+    for cid in sorted(cluster_df["Cluster"].unique()):
+        funds = cluster_df[cluster_df["Cluster"] == cid]["Fund"].tolist()
+        m = maar_daily[funds].mean(axis=1)
+        mn, mc = m.loc[normal].mean(), m.loc[crisis].mean()
+        ratio = mc / mn if (pd.notna(mn) and mn > 0) else np.nan
+        cohorts = set(cluster_df[cluster_df["Cluster"] == cid]["AgeCohort"])
+        ctype = ("Extreme (AG1/AG8)"
+                 if cohorts.issubset(C.CONSERVATIVE_COHORTS) else "Middle (AG2-AG7)")
+        rows.append({"Cluster": f"C{cid}", "N_funds": len(funds),
+                     "MAAR_normal": mn, "MAAR_crisis": mc,
+                     "Ratio": ratio, "Cohort_type": ctype})
     return pd.DataFrame(rows).set_index("Cluster")
-
-
-# =========================================================
-# 4. BUILD UNIFIED INTERPRETATION DATAFRAME
-# =========================================================
-def build_interp_df(AR_baseline, tracking_err_series, R_bg,
-                    regime_series=None):
-    """
-    Combine AR_t, tracking error, global benchmarks, and (optionally)
-    HMM regime labels into a single aligned DataFrame.
-    """
-    R_bg_aligned = R_bg.reindex(AR_baseline.index)
-
-    parts = [AR_baseline,
-             tracking_err_series.reindex(AR_baseline.index),
-             R_bg_aligned]
-    cols  = ["AR", "Tracking_Error"] + list(R_bg.columns)
-
-    if regime_series is not None:
-        parts.append(regime_series.reindex(AR_baseline.index))
-        cols.append("Regime")
-
-    df = pd.concat(parts, axis=1)
-    df.columns = cols
-    return df.dropna()

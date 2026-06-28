@@ -1,107 +1,84 @@
 """
-Step 01 — Absorption ratio, risk decomposition, and benchmark alignment.
+Step 01 — Absorption ratio and its robustness variants.
 
-Outputs (to `outputs/`):
-    step01_descriptive_stats_funds.csv
-    step01_descriptive_stats_global.csv
-    step01_ar_baseline.csv
-    step01_ar_augmented.csv
-    step01_ar_correlations.csv
-    step01_risk_decomposition.csv
-    step01_regularisation_verification.csv
+Computes the baseline covariance AR_t on the fund panel R^(f), the scale-free
+correlation AR_t, and the augmented correlation AR_t on
+A = [R^(f) | R^(b,f) | G^(b)] (N = 85). It then runs the supporting checks the
+referees asked for: the materiality of ridge regularisation, the covariance
+estimator comparison (sample / Ledoit-Wolf / MCD / Marchenko-Pastur), and the
+lead-lag (stale-pricing) test against the global equity factors.
 
-Figures (to `figures/`):
-    fig01_return_series.pdf
-    fig02_ar_benchmarks_events.pdf
-    fig04_ar_baseline_vs_augmented.pdf
-    fig11_risk_decomposition.pdf   (regime overlay added in Step 03)
+Run:  python scripts/01_absorption_ratio.py
 """
+import sys as _sys, pathlib as _pl
+_sys.path.insert(0, str(_pl.Path(__file__).resolve().parents[1] / "src"))
 
-import sys
-from pathlib import Path
-
+import warnings
+import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from irdpfn import data_io, absorption as ab, figures as fig, config as C
 
-from irdpfn.absorption import (
-    compute_absorption_ratio,
-    compute_risk_decomposition,
-    tracking_error,
-    verify_regularisation,
-)
-from irdpfn.config import N_FUNDS, OUTPUTS_DIR, ROLLING_WINDOW
-from irdpfn.data_io import descriptive_stats, load_and_align
-from irdpfn.figures import (
-    fig01_return_series,
-    fig02_ar_benchmarks_events,
-    fig04_ar_baseline_vs_augmented,
-)
+warnings.filterwarnings("ignore")
 
 
 def main():
-    # 1. Load and align everything
-    df, R_f, R_bf, R_bg, R_aug = load_and_align()
-    print(f"\nLoaded panel: {df.shape}")
-    print(f"R_f   shape: {R_f.shape}")
-    print(f"R_bf  shape: {R_bf.shape}")
-    print(f"R_bg  shape: {R_bg.shape}")
-    print(f"R_aug shape: {R_aug.shape}")
-    print(f"Date range: {R_f.index.min().date()} to {R_f.index.max().date()}")
+    print("=" * 70)
+    print("STEP 01 — Absorption ratio")
+    print("=" * 70)
 
-    # 2. Descriptive statistics
-    desc_funds  = descriptive_stats(df.set_index("Date")["log_return_price"]
-                                      .rename("Full sample"))
-    desc_global = descriptive_stats(R_bg)
-    desc_funds.to_csv(OUTPUTS_DIR / "step01_descriptive_stats_funds.csv")
-    desc_global.to_csv(OUTPUTS_DIR / "step01_descriptive_stats_global.csv")
+    panel = data_io.load_panel()
+    R_f, R_bf, G_b, R_aug = panel.R_f, panel.R_bf, panel.G_b, panel.R_aug
+    print(f"R_f {R_f.shape} | R_bf {R_bf.shape} | G_b {G_b.shape} | R_aug {R_aug.shape}")
 
-    # 3. Baseline AR_t (from R_f only)
-    print(f"\nComputing baseline AR_t (window = {ROLLING_WINDOW})...")
-    AR_baseline = compute_absorption_ratio(R_f, window=ROLLING_WINDOW).dropna()
-    AR_baseline.to_csv(OUTPUTS_DIR / "step01_ar_baseline.csv")
-    print(f"  range: [{AR_baseline.min():.4f}, {AR_baseline.max():.4f}]")
-    print(f"  mean:  {AR_baseline.mean():.4f}  std: {AR_baseline.std():.4f}")
+    # --- three absorption-ratio series ---------------------------------------
+    AR_cov = ab.absorption_ratio(R_f, window=C.WINDOW, method="covariance").dropna()
+    AR_corr = ab.absorption_ratio(R_f, window=C.WINDOW, method="correlation").dropna()
+    AR_aug = ab.absorption_ratio(R_aug, window=C.WINDOW, method="correlation").dropna()
 
-    # 4. Augmented AR_t (robustness)
-    print(f"\nComputing augmented AR_t...")
-    AR_augmented = compute_absorption_ratio(R_aug, window=ROLLING_WINDOW).dropna()
-    AR_augmented.to_csv(OUTPUTS_DIR / "step01_ar_augmented.csv")
-    common = AR_baseline.index.intersection(AR_augmented.index)
-    rho = AR_baseline.loc[common].corr(AR_augmented.loc[common])
-    print(f"  correlation (baseline vs augmented): {rho:.4f}")
+    for name, s in [("covariance R_f", AR_cov),
+                    ("correlation R_f", AR_corr),
+                    ("correlation R_aug", AR_aug)]:
+        print(f"  AR ({name:>18}): mean={s.mean():.4f}  "
+              f"range=[{s.min():.4f}, {s.max():.4f}]")
 
-    # 5. AR correlations with benchmarks
-    te = tracking_error(R_f, R_bf, kind="mae")
-    R_bg_aligned = R_bg.reindex(AR_baseline.index)
-    interp = pd.concat([AR_baseline,
-                        te.reindex(AR_baseline.index),
-                        R_bg_aligned], axis=1)
-    interp.columns = ["AR", "Tracking_Error"] + list(R_bg.columns)
-    corrs = interp.corr()["AR"].drop("AR")
-    corrs.to_csv(OUTPUTS_DIR / "step01_ar_correlations.csv",
-                 header=["correlation"])
-    print(f"\nAR correlations with benchmarks:")
-    print(corrs.round(4))
+    idx = AR_corr.index.intersection(AR_aug.index)
+    rho = np.corrcoef(AR_corr.loc[idx], AR_aug.loc[idx])[0, 1]
+    print(f"\ncorr(baseline, augmented) [both correlation-based] = {rho:.3f}")
+    print(f"Augmented mean {AR_aug.mean():.4f} < baseline mean {AR_corr.mean():.4f}: "
+          f"{AR_aug.mean() < AR_corr.mean()}  (expected True)")
 
-    # 6. Risk decomposition
-    risk_decomp = compute_risk_decomposition(R_f, window=ROLLING_WINDOW)
-    risk_decomp.to_csv(OUTPUTS_DIR / "step01_risk_decomposition.csv")
+    # --- regularisation materiality (footnote) -------------------------------
+    reg = ab.regularisation_check(R_f, window=C.WINDOW)
+    print("\nRidge regularisation materiality (baseline R_f, N<window):")
+    print(reg.to_string(index=False))
 
-    # 7. Regularisation verification (footnote)
-    verif = verify_regularisation(R_f, window=ROLLING_WINDOW)
-    verif.to_csv(OUTPUTS_DIR / "step01_regularisation_verification.csv",
-                 index=False)
-    print(f"\nRegularisation verification:")
-    print(verif.to_string(index=False))
+    # --- covariance estimator comparison -------------------------------------
+    comp = ab.compare_estimators(R_f, window=C.WINDOW)
+    print("\nCovariance estimator comparison (summary over common dates):")
+    print(comp.describe().loc[["mean", "std", "min", "max"]].round(4).to_string())
 
-    # 8. Figures (the ones that don't need HMM regimes)
-    print(f"\nGenerating figures...")
-    fig01_return_series(R_f, R_bf, R_bg, AR_baseline.index)
-    fig02_ar_benchmarks_events(AR_baseline, R_bf, R_bg)
-    fig04_ar_baseline_vs_augmented(AR_baseline, AR_augmented)
+    # --- lead-lag stale-pricing test -----------------------------------------
+    r_bar = R_f.mean(axis=1).rename("r_bar")
+    print("\nLead-lag corr(r_bar_t, equity_{t-k})  (k>0 => equity leads):")
+    for eq in C.EQUITY_COLS:
+        ll = ab.lead_lag_corr(r_bar, G_b[eq])
+        c0 = ll.loc[ll.lag_k == 0, "corr"].iloc[0]
+        c1 = ll.loc[ll.lag_k == 1, "corr"].iloc[0]
+        print(f"  {eq:<12} k=0 {c0:+.3f} | k=+1 {c1:+.3f}")
 
-    print("\nStep 01 complete.")
+    # --- persist + figures ---------------------------------------------------
+    pd.DataFrame({"AR_cov": AR_cov, "AR_corr": AR_corr}).to_csv(
+        C.OUTPUTS_DIR / "step01_absorption_ratio.csv")
+    AR_aug.to_frame("AR_aug").to_csv(C.OUTPUTS_DIR / "step01_absorption_augmented.csv")
+    comp.to_csv(C.OUTPUTS_DIR / "step01_estimator_comparison.csv")
+    reg.to_csv(C.OUTPUTS_DIR / "step01_regularisation_check.csv", index=False)
+
+    fig.fig_return_series(R_f, R_bf, G_b)
+    fig.fig_baseline_vs_augmented(AR_corr, AR_aug)
+    fig.fig_estimator_comparison(comp)
+    print(f"\nFigures + tables written to {C.FIGURES_DIR} and {C.OUTPUTS_DIR}")
+    print("Step 01 complete.")
 
 
 if __name__ == "__main__":
