@@ -12,7 +12,7 @@ ships a **public synthetic panel** that reproduces the statistical structure the
 method relies on, so the full pipeline can be run and inspected end to end on
 data that is safe to share. The synthetic data is a structural stand-in, **not**
 a reproduction of the paper's numbers — see
-[`docs/methodology_notes.md`](docs/methodology_notes.md) §5 for the caveats.
+[`docs/methodology_notes.md`](docs/methodology_notes.md) for the caveats.
 
 ---
 
