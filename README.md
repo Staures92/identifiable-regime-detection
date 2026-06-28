@@ -91,7 +91,7 @@ identifiable-regime-detection/
 There are two views of the absorption ratio with its benchmarks, both
 regenerated from the synthetic panel under `figures/`:
 `fig02_ar_benchmarks_states_*` shades AR_t by the three detected HMM states
-(with τ = 0.845, the 1/N floor, and the 37.5% crisis-day count), while
+(with `\tau` = 0.845, the 1/N floor, and the 37.5% crisis-day count), while
 `fig02_ar_benchmarks_events_*` shades it by the four labelled crisis episodes
 (COVID-19, Ukraine war, inflation shock, banking stress) and shows the raw yield
 shocks. Only the underlying values differ between `paper_figures/` (real) and
