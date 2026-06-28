@@ -249,7 +249,7 @@ def compare_hmm_robustness(res_a, res_b, verbose=True):
     return {"table": table, "crosstab": ct, "ari": ari, "agreement": agree}
 
 
-def window_robustness(R_f, windows=C.WINDOWS, n_seeds=50, absorption_fn=None):
+def window_robustness(R_f, windows=C.WINDOWS, n_seeds=200, absorption_fn=None):
     """Refit the EM pipeline across rolling-window lengths; summary frame."""
     if absorption_fn is None:
         from .absorption import absorption_ratio as absorption_fn
@@ -269,7 +269,7 @@ def window_robustness(R_f, windows=C.WINDOWS, n_seeds=50, absorption_fn=None):
 
 
 # ===========================================================================
-# Overlapping-window diagnostics (Reviewer Comment 3)
+# Overlapping-window diagnostics
 # ===========================================================================
 def overlap_acf(ar_series, window=C.WINDOW, n_lags=180):
     """Empirical AR autocorrelation vs the overlap-only benchmark."""
@@ -324,7 +324,7 @@ def overlap_free_regime_check(ar_full, res_ref, window=C.WINDOW,
 
 
 # ===========================================================================
-# Sticky Bayesian HMM (NumPyro)  --  imported lazily
+# Sticky Bayesian HMM (NumPyro)  
 # ===========================================================================
 def sticky_hmm_model(observations, K, kappa=20.0, alpha=1.0,
                      ar_min=0.5, ar_max=1.0):
