@@ -29,4 +29,4 @@ __all__ = [
     "config", "synthetic_data", "data_io", "absorption",
     "clustering", "regime", "diagnostics", "figures",
 ]
-__version__ = "1.0.0"
+__version__ = "1.1.0"

@@ -4,13 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "irdpfn"
-version = "1.0.0"
+version = "1.1.0"
 description = "Identifiable Regime Detection in Pension Fund Networks via Sticky Hidden Markov Models"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
     { name = "Megang Nkamga Junile Staures" },
+    { name = "Audrius Kabašinskas" },
+    
 ]
 keywords = [
     "absorption ratio", "systemic risk", "hidden Markov model",
