@@ -103,8 +103,8 @@ shocks. Only the underlying values differ between `paper_figures/` (real) and
 | --- | --- | --- |
 | Absorption ratio | PC1 variance share over a 60-day window | covariance **and** scale-free correlation form; augmented `A = [R_f \| R_bf \| G_b]`, N = 85 |
 | Clustering | DTW dissimilarity + average linkage | silhouette in DTW geometry → `K*`; non-circularity vs label partitions |
-| Regime detection | Gaussian EM-HMM on `AR_t` | BIC over K; `K = 3` baseline; crisis threshold τ from equal-density Gaussian crossing |
-| Identifiability | sticky HMM via NUTS | κ calibrated from EM persistence; `K = 3` posterior-identifiable |
+| Regime detection | Gaussian EM-HMM on `AR_t` | BIC over K; `K = 3` baseline; crisis threshold `\tau` from equal-density Gaussian crossing |
+| Identifiability | sticky HMM via NUTS | `\kappa` calibrated from EM persistence; `K = 3` posterior-identifiable |
 | Diagnostics | interpret + stress-test | regime-conditional OLS (HAC), augmented agreement + permutation, per-cluster MAAR |
 
 Full detail, including the overlap-window defence and the synthetic-data
